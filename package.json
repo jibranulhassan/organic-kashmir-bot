@@ -1,0 +1,14 @@
+{
+  "name": "organic-kashmir-whatsapp-bot",
+  "version": "1.0.0",
+  "description": "WhatsApp menu bot for organickashmir.com (WhatsApp Cloud API + live Shopify catalog)",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "simulate": "node simulate.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {}
+}

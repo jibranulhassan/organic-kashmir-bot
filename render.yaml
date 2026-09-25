@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: organic-kashmir-whatsapp-bot
+    runtime: node
+    plan: free
+    buildCommand: echo "no build needed"
+    startCommand: node src/server.js
+    envVars:
+      - key: WHATSAPP_TOKEN
+        sync: false
+      - key: PHONE_NUMBER_ID
+        sync: false
+      - key: VERIFY_TOKEN
+        sync: false
+      - key: APP_SECRET
+        sync: false
+      - key: STORE_URL
+        value: https://www.organickashmir.com
+      - key: CORPORATE_EMAIL
+        value: info@organickashmir.com
