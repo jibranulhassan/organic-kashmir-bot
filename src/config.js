@@ -48,7 +48,7 @@ module.exports = {
       description: 'Wellness, oils & rose water',
       children: [
         { title: 'Wellness', collection: 'wellness-1' },
-        { title: 'Natural & Essential Oils', collection: 'natural-essential-oils' },
+        { title: 'Essential Oils', collection: 'natural-essential-oils' },
         { title: 'Rose Water', collection: 'rose-water-2' },
       ],
     },
