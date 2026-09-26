@@ -1,9 +1,12 @@
-// Conversation logic. Stateless: every button/list row carries an ID that says where
+// Conversation logic. Stateless: every button carries an ID that says where
 // the customer is (e.g. "col:kashmiri-saffron:0"), so no database is needed.
 //
 // Flow:  any message -> [Retail | Corporate]
 //        Corporate   -> email address
 //        Retail      -> Category -> Sub-category -> Product -> Size/variant -> "Buy Now" link
+//
+// All choices are shown as tappable buttons directly in the chat (no "View options" step).
+// WhatsApp allows max 3 buttons per message, so longer menus are split over a few messages.
 
 const { MENU, CORPORATE_EMAIL, BRAND, STORE_URL } = require('./config');
 const shop = require('./shopify');
@@ -11,7 +14,9 @@ const shop = require('./shopify');
 const cut = (s, n) => (s.length <= n ? s : s.slice(0, n - 1).trimEnd() + '…');
 const rs = (n) => 'Rs. ' + Math.round(n).toLocaleString('en-IN');
 
-// ---------- message builders (WhatsApp Cloud API "interactive" payloads) ----------
+const PER_PAGE = 7; // items per page before a "More" button (7 + More + Back = 3 messages max)
+
+// ---------- message builders (WhatsApp Cloud API payloads) ----------
 function buttons(body, btns, header) {
   const m = {
     type: 'interactive',
@@ -25,31 +30,6 @@ function buttons(body, btns, header) {
   };
   if (header) m.interactive.header = { type: 'text', text: cut(header, 60) };
   return m;
-}
-
-function list(header, body, buttonText, rows, sectionTitle = 'Options') {
-  return {
-    type: 'interactive',
-    interactive: {
-      type: 'list',
-      header: { type: 'text', text: cut(header, 60) },
-      body: { text: body },
-      footer: { text: 'Type "menu" anytime to start over' },
-      action: {
-        button: cut(buttonText, 20),
-        sections: [
-          {
-            title: cut(sectionTitle, 24),
-            rows: rows.map((r) => {
-              const row = { id: r.id, title: cut(r.title, 24) };
-              if (r.description) row.description = cut(r.description, 72);
-              return row;
-            }),
-          },
-        ],
-      },
-    },
-  };
 }
 
 function text(body) {
@@ -70,23 +50,43 @@ function buyLink(body, url, image) {
   return m;
 }
 
-// Fit items into WhatsApp's 10-row list limit, adding "More" and "Back" rows.
-function page(items, pageNo, moreId, back) {
-  const room = back ? 9 : 10;
-  const start = pageNo * (room - 1);
-  const remaining = items.slice(start);
-  let shown, hasMore;
-  if (remaining.length <= room) {
-    shown = remaining;
-    hasMore = false;
-  } else {
-    shown = remaining.slice(0, room - 1);
-    hasMore = true;
+// Shows options as direct buttons, split into as few messages as possible (3 buttons each,
+// balanced so no message is left with a lonely button).
+// items: [{ id, title, line? }] — "line" = full text shown above the buttons, numbered.
+function choices(intro, items, { header, moreText = 'More options 👇', startNum = 0 } = {}) {
+  const n = Math.max(1, Math.ceil(items.length / 3));
+  const chunks = [];
+  let i = 0;
+  for (let k = 0; k < n; k++) {
+    const size = Math.ceil((items.length - i) / (n - k));
+    chunks.push(items.slice(i, i + size));
+    i += size;
   }
-  const rows = [...shown];
-  if (hasMore) rows.push({ id: moreId, title: '➡️ More', description: `Show more (${remaining.length - shown.length} left)` });
-  if (back) rows.push(back);
-  return rows;
+  let num = startNum;
+  return chunks.map((chunk, k) => {
+    const lines = [];
+    const btns = chunk.map((it) => {
+      if (!it.line) return it;
+      num++;
+      lines.push(`*${num}.* ${it.line}`);
+      return { id: it.id, title: `${num}. ${it.title}` };
+    });
+    const parts = [];
+    if (k === 0 && intro) parts.push(intro);
+    if (lines.length) parts.push(lines.join('\n'));
+    const body = parts.join('\n\n') || moreText;
+    return buttons(body, btns, k === 0 ? header : null);
+  });
+}
+
+// Limit a long list to one page, adding "More" and "Back" buttons.
+function paged(items, pageNo, moreId, back) {
+  const start = pageNo * PER_PAGE;
+  const rest = items.slice(start);
+  const out = rest.length > PER_PAGE + 1 ? rest.slice(0, PER_PAGE) : rest;
+  if (rest.length > out.length) out.push({ id: moreId, title: '➡️ More' });
+  if (back) out.push(back);
+  return out;
 }
 
 // ---------- helpers ----------
@@ -111,15 +111,17 @@ async function findProduct(col, handle) {
   return shop.getProduct(handle);
 }
 
-// ---------- screens ----------
+// ---------- screens (each returns an array of messages) ----------
 function welcome() {
-  return buttons(
-    `Welcome to *${BRAND}* 🌸\nPure saffron, honey & more — straight from Kashmir.\n\nAre you shopping as a retail customer or contacting us for corporate / bulk orders?`,
-    [
-      { id: 'retail', title: '🛍️ Retail Customer' },
-      { id: 'corporate', title: '🏢 Corporate' },
-    ]
-  );
+  return [
+    buttons(
+      `Welcome to *${BRAND}* 🌸\nPure saffron, honey & more — straight from Kashmir.\n\nAre you shopping as a retail customer or contacting us for corporate / bulk orders?`,
+      [
+        { id: 'retail', title: '🛍️ Retail Customer' },
+        { id: 'corporate', title: '🏢 Corporate' },
+      ]
+    ),
+  ];
 }
 
 function corporate() {
@@ -132,12 +134,10 @@ function corporate() {
 }
 
 function categories() {
-  return list(
-    'Shop by category',
-    'Choose a category to browse our products 👇',
-    'View categories',
-    MENU.map((c) => ({ id: `cat:${c.key}`, title: c.title, description: c.description })),
-    'Categories'
+  return choices(
+    'Choose a category to browse 👇',
+    MENU.map((c) => ({ id: `cat:${c.key}`, title: c.title })),
+    { header: 'Shop by category', moreText: 'More categories 👇' }
   );
 }
 
@@ -145,15 +145,13 @@ async function category(key) {
   const c = findCategory(key);
   if (!c) return categories();
   if (!c.children) return collection(c.collection, 0);
-  return list(
-    c.title,
+  return choices(
     'Pick a sub-category 👇',
-    'View options',
     [
       ...c.children.map((s) => ({ id: `col:${s.collection}:0`, title: s.title })),
-      { id: 'retail', title: '⬅️ Back', description: 'All categories' },
+      { id: 'retail', title: '⬅️ Back' },
     ],
-    c.title
+    { header: c.title }
   );
 }
 
@@ -161,15 +159,15 @@ async function collection(handle, pageNo) {
   const { cat, sub } = parentOfCollection(handle);
   const title = (sub || cat || { title: 'Products' }).title;
   const products = await shop.getCollectionProducts(handle);
-  const back = sub
-    ? { id: `cat:${cat.key}`, title: '⬅️ Back', description: cat.title }
-    : { id: 'retail', title: '⬅️ Back', description: 'All categories' };
+  const back = sub ? { id: `cat:${cat.key}`, title: '⬅️ Back' } : { id: 'retail', title: '⬅️ Back' };
 
   if (!products.length) {
-    return buttons(`Sorry, nothing in *${title}* is in stock right now.`, [
-      { id: back.id, title: '⬅️ Back' },
-      { id: 'start', title: '🏠 Main menu' },
-    ]);
+    return [
+      buttons(`Sorry, nothing in *${title}* is in stock right now.`, [
+        back,
+        { id: 'start', title: '🏠 Main menu' },
+      ]),
+    ];
   }
 
   const items = products.map((p) => {
@@ -177,50 +175,47 @@ async function collection(handle, pageNo) {
     return {
       id: `prod:${handle}:${p.handle}`,
       title: p.title,
-      description: (p.variants.length > 1 ? 'From ' : '') + rs(min) + (p.title.length > 24 ? ` · ${p.title}` : ''),
+      line: `${p.title} — ${p.variants.length > 1 ? 'from ' : ''}${rs(min)}`,
     };
   });
-  return list(
-    title,
-    `Choose a product 👇${products.length > 9 ? `\n(${products.length} products)` : ''}`,
-    'View products',
-    page(items, pageNo, `col:${handle}:${pageNo + 1}`, back),
-    'Products'
-  );
+  return choices('Choose a product 👇', paged(items, pageNo, `col:${handle}:${pageNo + 1}`, back), {
+    header: title,
+    startNum: pageNo * PER_PAGE,
+  });
 }
 
 async function product(col, handle, pageNo = 0) {
   const p = await findProduct(col, handle);
   if (!p || !p.variants.length) {
-    return buttons('Sorry, this product is currently unavailable.', [{ id: 'start', title: '🏠 Main menu' }]);
+    return [buttons('Sorry, this product is currently unavailable.', [{ id: 'start', title: '🏠 Main menu' }])];
   }
   if (p.variants.length === 1) return variant(col, handle, p.variants[0].id, p);
 
   const items = p.variants.map((v) => ({
     id: `var:${col || '-'}:${handle}:${v.id}`,
     title: v.title,
-    description: rs(v.price),
+    line: `${v.title} — ${rs(v.price)}`,
   }));
-  const back = col ? { id: `col:${col}:0`, title: '⬅️ Back', description: 'Back to products' } : null;
-  return list(
-    p.title,
-    `Choose a size / variant of *${p.title}* 👇`,
-    'Choose size',
-    page(items, pageNo, `prod:${col || '-'}:${handle}:${pageNo + 1}`, back),
-    'Sizes'
+  const back = col ? { id: `col:${col}:0`, title: '⬅️ Back' } : null;
+  return choices(
+    `Choose a size for *${p.title}* 👇`,
+    paged(items, pageNo, `prod:${col || '-'}:${handle}:${pageNo + 1}`, back),
+    { header: p.title, startNum: pageNo * PER_PAGE }
   );
 }
 
 async function variant(col, handle, variantId, known) {
   const p = known || (await findProduct(col, handle));
   const v = p && p.variants.find((x) => x.id === String(variantId));
-  if (!v) return buttons('Sorry, that option is no longer available.', [{ id: 'start', title: '🏠 Main menu' }]);
+  if (!v) return [buttons('Sorry, that option is no longer available.', [{ id: 'start', title: '🏠 Main menu' }])];
   const name = v.title && v.title !== 'Default Title' ? `${p.title} — ${v.title}` : p.title;
-  return buyLink(
-    `*${name}*\n💰 ${rs(v.price)}\n\nTap *Buy Now* to open this product on our website with your selection ready to add to cart. 🛒`,
-    shop.productUrl(handle, v.id),
-    p.image
-  );
+  return [
+    buyLink(
+      `*${name}*\n💰 ${rs(v.price)}\n\nTap *Buy Now* to open this product on our website with your selection ready to add to cart. 🛒`,
+      shop.productUrl(handle, v.id),
+      p.image
+    ),
+  ];
 }
 
 // ---------- router ----------
@@ -231,20 +226,20 @@ async function respond(input) {
 
   try {
     if (!id) {
-      if (/^(retail|1)$/.test(t)) return [categories()];
+      if (/^(retail|1)$/.test(t)) return categories();
       if (/^(corporate|bulk|2)$/.test(t)) return corporate();
-      return [welcome()];
+      return welcome();
     }
-    if (id === 'start') return [welcome()];
-    if (id === 'retail') return [categories()];
+    if (id === 'start') return welcome();
+    if (id === 'retail') return categories();
     if (id === 'corporate') return corporate();
 
     const [kind, a, b, c] = id.split(':');
-    if (kind === 'cat') return [await category(a)];
-    if (kind === 'col') return [await collection(a, Number(b) || 0)];
-    if (kind === 'prod') return [await product(a === '-' ? null : a, b, Number(c) || 0)];
-    if (kind === 'var') return [await variant(a === '-' ? null : a, b, c)];
-    return [welcome()];
+    if (kind === 'cat') return await category(a);
+    if (kind === 'col') return await collection(a, Number(b) || 0);
+    if (kind === 'prod') return await product(a === '-' ? null : a, b, Number(c) || 0);
+    if (kind === 'var') return await variant(a === '-' ? null : a, b, c);
+    return welcome();
   } catch (err) {
     console.error('Bot error:', err);
     return [
