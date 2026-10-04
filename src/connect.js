@@ -54,6 +54,10 @@ ${missing.length ? `<p class="warn">Missing Render settings: <b>${missing.join('
 </ol>
 <p><button id="go" ${missing.length ? 'disabled' : ''}>Connect WhatsApp Business app</button></p>
 <div id="log"></div>
+<details style="margin-top:24px"><summary>Number already connected, but setup didn't finish?</summary>
+<p>Paste a <b>system-user access token</b> that has access to your WhatsApp account (Business Settings → System users → Generate token, with whatsapp_business_management and whatsapp_business_messaging), then click Finish setup.</p>
+<textarea id="tok" placeholder="Paste token here"></textarea>
+<p><button id="fin">Finish setup</button></p></details>
 </div>
 <script>
   const KEY = ${JSON.stringify(key)};
@@ -68,7 +72,7 @@ ${missing.length ? `<p class="warn">Missing Render settings: <b>${missing.join('
     if (!/facebook\\.com$/.test(new URL(event.origin).hostname)) return;
     let data; try { data = JSON.parse(event.data); } catch (_) { return; }
     if (data.type !== 'WA_EMBEDDED_SIGNUP') return;
-    if (String(data.event).startsWith('FINISH')) { session = data.data || {}; maybeFinish(); }
+    if (String(data.event).startsWith('FINISH')) { session = data.data || {}; log('Meta reports: ' + data.event + (session.waba_id ? ' (account ' + session.waba_id + ')' : '')); maybeFinish(); }
     else if (data.event === 'CANCEL') log('Signup was closed before finishing' + (data.data && data.data.current_step ? ' (at step: ' + data.data.current_step + ')' : '') + '. You can try again.', 'warn');
     else if (data.event === 'ERROR') log('Meta reported an error: ' + JSON.stringify(data.data), 'err');
   });
@@ -86,6 +90,12 @@ ${missing.length ? `<p class="warn">Missing Render settings: <b>${missing.join('
     });
   };
 
+  document.getElementById('fin').onclick = () => {
+    const t = document.getElementById('tok').value.trim();
+    if (!t) return log('Paste the token first.', 'warn');
+    sent = false; code = null; session = session || {}; manualToken = t; finish();
+  };
+  let manualToken = null;
   let sent = false;
   async function maybeFinish() {
     if (!code || sent) return;
@@ -99,7 +109,7 @@ ${missing.length ? `<p class="warn">Missing Render settings: <b>${missing.join('
     try {
       const r = await fetch('/connect/complete?key=' + encodeURIComponent(KEY), {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code, waba_id: session && session.waba_id, phone_number_id: session && session.phone_number_id })
+        body: JSON.stringify({ code, token: manualToken || undefined, page_url: location.origin + location.pathname, waba_id: session && session.waba_id, phone_number_id: session && session.phone_number_id })
       });
       const out = await r.json();
       if (!r.ok) return log('❌ ' + (out.error || 'Something went wrong'), 'err');
@@ -125,16 +135,23 @@ async function graph(method, path, token, body) {
   return { ok: res.ok, data };
 }
 
-async function complete({ code, waba_id, phone_number_id }) {
-  if (!code) throw new Error('No login code received from Meta.');
+async function complete({ code, waba_id, phone_number_id, page_url, token: givenToken }) {
+  if (!code && !givenToken) throw new Error('No login code received from Meta.');
   const steps = [];
 
-  // 1. Exchange the one-time code for an access token
-  const q = new URLSearchParams({ client_id: process.env.META_APP_ID, client_secret: process.env.META_APP_SECRET, code });
-  const tr = await fetch(`${GRAPH}/oauth/access_token?${q}`);
-  const tj = await tr.json().catch(() => ({}));
-  if (!tr.ok || !tj.access_token) throw new Error('Could not get access token: ' + JSON.stringify(tj.error || tj));
-  const token = tj.access_token;
+  // 1. Exchange the one-time code for an access token.
+  // Codes from the JS SDK popup are picky about redirect_uri, so try the accepted variants in turn.
+  const variants = [{ redirect_uri: '' }, {}, ...(page_url ? [{ redirect_uri: page_url }] : [])];
+  let token = givenToken || null, lastErr = null;
+  for (const extra of givenToken ? [] : variants) {
+    const q = new URLSearchParams({ client_id: process.env.META_APP_ID, client_secret: process.env.META_APP_SECRET, code, ...extra });
+    const tr = await fetch(`${GRAPH}/oauth/access_token?${q}`);
+    const tj = await tr.json().catch(() => ({}));
+    if (tr.ok && tj.access_token) { token = tj.access_token; break; }
+    lastErr = tj.error || tj;
+    if (!(lastErr && lastErr.error_subcode === 36008)) break; // only retry the redirect_uri mismatch
+  }
+  if (!token) throw new Error('Could not get access token: ' + JSON.stringify(lastErr));
   steps.push({ name: 'Access token received', ok: true });
 
   // 2. Find the WhatsApp account and phone number if Meta didn't send them
