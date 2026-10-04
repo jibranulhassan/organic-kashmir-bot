@@ -78,16 +78,8 @@ ${missing.length ? `<p class="warn">Missing Render settings: <b>${missing.join('
   });
 
   document.getElementById('go').onclick = () => {
-    if (!window.FB) return log('Facebook SDK did not load. Disable ad-blockers for this page and reload.', 'err');
-    FB.login((response) => {
-      if (response.authResponse && response.authResponse.code) { code = response.authResponse.code; maybeFinish(); }
-      else log('Facebook login was not completed.', 'warn');
-    }, {
-      config_id: ${JSON.stringify(process.env.FB_CONFIG_ID || '')},
-      response_type: 'code',
-      override_default_response_type: true,
-      extras: { setup: {}, featureType: 'whatsapp_business_app_onboarding', sessionInfoVersion: '3' }
-    });
+    // Same-tab redirect flow (reliable code exchange). Meta sends you back here when done.
+    location.href = '/connect/start?key=' + encodeURIComponent(KEY);
   };
 
   document.getElementById('fin').onclick = () => {
@@ -135,13 +127,15 @@ async function graph(method, path, token, body) {
   return { ok: res.ok, data };
 }
 
-async function complete({ code, waba_id, phone_number_id, page_url, token: givenToken }) {
+async function complete({ code, waba_id, phone_number_id, page_url, redirect_uri, token: givenToken }) {
   if (!code && !givenToken) throw new Error('No login code received from Meta.');
   const steps = [];
 
   // 1. Exchange the one-time code for an access token.
   // Codes from the JS SDK popup are picky about redirect_uri, so try the accepted variants in turn.
-  const variants = [{ redirect_uri: '' }, {}, ...(page_url ? [{ redirect_uri: page_url }] : [])];
+  const variants = redirect_uri
+    ? [{ redirect_uri }]
+    : [{ redirect_uri: '' }, {}, ...(page_url ? [{ redirect_uri: page_url }] : [])];
   let token = givenToken || null, lastErr = null;
   for (const extra of givenToken ? [] : variants) {
     const q = new URLSearchParams({ client_id: process.env.META_APP_ID, client_secret: process.env.META_APP_SECRET, code, ...extra });
@@ -191,9 +185,28 @@ async function complete({ code, waba_id, phone_number_id, page_url, token: given
 }
 
 // Returns true if it handled the request
+function callbackUrl(req) {
+  const base = process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || `https://${req.headers.host}`;
+  return base.replace(/\/$/, '') + '/connect/callback';
+}
+
+function resultPage(out, error) {
+  const rows = out
+    ? `<p class="ok">✅ <b>Connected!</b> Copy these two values into Render → Environment (replace the old ones):</p>
+       <p><b>PHONE_NUMBER_ID</b><br><textarea readonly>${out.phone_number_id}</textarea></p>
+       <p><b>WHATSAPP_TOKEN</b> (keep this private)<br><textarea readonly>${out.token}</textarea></p>
+       <p>Make sure <b>SHARED_NUMBER</b> = <code>true</code>, then click <b>Save, rebuild and deploy</b>.</p>
+       <p><b>Steps done:</b><br>${out.steps.map((s) => (s.ok ? '✅ ' : '⚠️ ') + s.name + (s.detail ? ' — ' + String(s.detail).replace(/</g, '&lt;') : '')).join('<br>')}</p>`
+    : `<p class="err">❌ ${String(error).replace(/</g, '&lt;')}</p><p><a href="javascript:history.go(-2)">Go back and try again</a></p>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect WhatsApp — result</title>
+<style>body{font-family:system-ui,Segoe UI,Roboto,sans-serif;background:#f6f4ef;margin:0;padding:24px;color:#1d2a24}.card{max-width:640px;margin:32px auto;background:#fff;border-radius:14px;padding:28px}
+.ok{background:#e8f6ee;border-radius:8px;padding:12px}.err{background:#fdecec;border-radius:8px;padding:12px}textarea{width:100%;height:70px;font-family:Consolas,monospace;font-size:13px}p{line-height:1.55}</style>
+</head><body><div class="card"><h1 style="font-size:22px">Connect your WhatsApp Business number</h1>${rows}</div></body></html>`;
+}
+
 function handle(req, res, url) {
-  if (url.pathname !== '/connect' && url.pathname !== '/connect/complete') return false;
-  const key = url.searchParams.get('key') || '';
+  if (!url.pathname.startsWith('/connect')) return false;
+  const key = url.searchParams.get('key') || url.searchParams.get('state') || '';
   if (!authorized(key)) {
     res.writeHead(404);
     res.end();
@@ -203,6 +216,43 @@ function handle(req, res, url) {
   if (req.method === 'GET' && url.pathname === '/connect') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(page(key));
+    return true;
+  }
+
+  // Start: send the browser to Meta's Embedded Signup (Coexistence) in the same tab
+  if (req.method === 'GET' && url.pathname === '/connect/start') {
+    const q = new URLSearchParams({
+      client_id: process.env.META_APP_ID || '',
+      redirect_uri: callbackUrl(req),
+      config_id: process.env.FB_CONFIG_ID || '',
+      response_type: 'code',
+      override_default_response_type: 'true',
+      state: key,
+      extras: JSON.stringify({ setup: {}, featureType: 'whatsapp_business_app_onboarding', sessionInfoVersion: '3' }),
+    });
+    res.writeHead(302, { Location: `https://www.facebook.com/${process.env.GRAPH_VERSION || 'v24.0'}/dialog/oauth?${q}` });
+    res.end();
+    return true;
+  }
+
+  // Meta sends the browser back here with ?code=...&state=KEY
+  if (req.method === 'GET' && url.pathname === '/connect/callback') {
+    const code = url.searchParams.get('code');
+    const send = (html) => {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end(html);
+    };
+    if (!code) {
+      const why = url.searchParams.get('error_description') || url.searchParams.get('error_reason') || 'Signup was cancelled or not completed.';
+      send(resultPage(null, why));
+      return true;
+    }
+    complete({ code, redirect_uri: callbackUrl(req) })
+      .then((out) => send(resultPage(out)))
+      .catch((e) => {
+        console.error('Connect error:', e.message);
+        send(resultPage(null, e.message));
+      });
     return true;
   }
 
