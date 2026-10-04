@@ -127,6 +127,37 @@ async function graph(method, path, token, body) {
   return { ok: res.ok, data };
 }
 
+async function findNumbers(token, onlyWaba) {
+  const appToken = `${process.env.META_APP_ID}|${process.env.META_APP_SECRET}`;
+  const wabas = new Set(onlyWaba ? [onlyWaba] : []);
+
+  if (!wabas.size) {
+    // a) WhatsApp accounts this token was granted
+    const r = await fetch(`${GRAPH}/debug_token?input_token=${encodeURIComponent(token)}&access_token=${encodeURIComponent(appToken)}`);
+    const d = await r.json().catch(() => ({}));
+    for (const g of (d.data && d.data.granular_scopes) || []) {
+      if (/^whatsapp_business_(management|messaging)$/.test(g.scope)) for (const id of g.target_ids || []) wabas.add(id);
+    }
+  }
+  if (!wabas.size) {
+    // b) WhatsApp accounts owned by / shared with the businesses this token can see
+    const b = await graph('GET', '/me/businesses?fields=id,name', token);
+    for (const biz of (b.data && b.data.data) || []) {
+      for (const edge of ['owned_whatsapp_business_accounts', 'client_whatsapp_business_accounts']) {
+        const w = await graph('GET', `/${biz.id}/${edge}?fields=id,name`, token);
+        for (const x of (w.data && w.data.data) || []) wabas.add(x.id);
+      }
+    }
+  }
+
+  const out = [];
+  for (const id of wabas) {
+    const pn = await graph('GET', `/${id}/phone_numbers?fields=id,display_phone_number,verified_name,is_on_biz_app,platform_type`, token);
+    for (const n of (pn.data && pn.data.data) || []) out.push({ ...n, waba_id: id });
+  }
+  return out;
+}
+
 async function complete({ code, waba_id, phone_number_id, page_url, redirect_uri, token: givenToken }) {
   if (!code && !givenToken) throw new Error('No login code received from Meta.');
   const steps = [];
@@ -149,22 +180,29 @@ async function complete({ code, waba_id, phone_number_id, page_url, redirect_uri
   steps.push({ name: 'Access token received', ok: true });
 
   // 2. Find the WhatsApp account and phone number if Meta didn't send them
-  if (!waba_id) {
-    const dbg = await graph('GET', `/debug_token?input_token=${encodeURIComponent(token)}`, `${process.env.META_APP_ID}|${process.env.META_APP_SECRET}`);
-    const scopes = (dbg.data.data && dbg.data.data.granular_scopes) || [];
-    const s = scopes.find((x) => x.scope === 'whatsapp_business_management');
-    waba_id = s && s.target_ids && s.target_ids[0];
+  if (!waba_id || !phone_number_id) {
+    const candidates = await findNumbers(token, waba_id);
+    if (!candidates.length) {
+      const e = new Error(
+        'Meta did not share any WhatsApp number with this app. Please run the connect steps again and make sure you finish them: enter the number, scan the QR code in the WhatsApp Business app and allow chat history.'
+      );
+      throw e;
+    }
+    // Prefer the number that lives in the WhatsApp Business app (Coexistence), never Meta's test number
+    const real = candidates.filter((c) => !/^\+?1\s?555/.test(c.display_phone_number || ''));
+    const biz = real.filter((c) => c.is_on_biz_app);
+    const pick = biz.length === 1 ? biz[0] : real.length === 1 ? real[0] : null;
+    if (!pick) {
+      const e = new Error('CHOOSE');
+      e.choices = real.length ? real : candidates;
+      e.token = token;
+      throw e;
+    }
+    waba_id = pick.waba_id;
+    phone_number_id = pick.id;
+    steps.push({ name: 'Phone number found', ok: true, detail: `${pick.display_phone_number} (${pick.verified_name || ''})` });
   }
-  if (!waba_id) throw new Error('Could not find your WhatsApp Business Account ID.');
   steps.push({ name: 'WhatsApp account found', ok: true, detail: waba_id });
-
-  if (!phone_number_id) {
-    const pn = await graph('GET', `/${waba_id}/phone_numbers?fields=id,display_phone_number,verified_name`, token);
-    const first = pn.data.data && pn.data.data[0];
-    if (!first) throw new Error('No phone number found on the WhatsApp account: ' + JSON.stringify(pn.data.error || pn.data));
-    phone_number_id = first.id;
-    steps.push({ name: 'Phone number found', ok: true, detail: `${first.display_phone_number} (${first.verified_name})` });
-  }
 
   // 3. Subscribe this app to the WhatsApp account so messages reach the bot
   const sub = await graph('POST', `/${waba_id}/subscribed_apps`, token);
@@ -190,8 +228,8 @@ function callbackUrl(req) {
   return base.replace(/\/$/, '') + '/connect/callback';
 }
 
-function resultPage(out, error) {
-  const rows = out
+function resultPage(out, error, custom) {
+  const rows = custom ? custom : out
     ? `<p class="ok">✅ <b>Connected!</b> Copy these two values into Render → Environment (replace the old ones):</p>
        <p><b>PHONE_NUMBER_ID</b><br><textarea readonly>${out.phone_number_id}</textarea></p>
        <p><b>WHATSAPP_TOKEN</b> (keep this private)<br><textarea readonly>${out.token}</textarea></p>
@@ -202,6 +240,18 @@ function resultPage(out, error) {
 <style>body{font-family:system-ui,Segoe UI,Roboto,sans-serif;background:#f6f4ef;margin:0;padding:24px;color:#1d2a24}.card{max-width:640px;margin:32px auto;background:#fff;border-radius:14px;padding:28px}
 .ok{background:#e8f6ee;border-radius:8px;padding:12px}.err{background:#fdecec;border-radius:8px;padding:12px}textarea{width:100%;height:70px;font-family:Consolas,monospace;font-size:13px}p{line-height:1.55}</style>
 </head><body><div class="card"><h1 style="font-size:22px">Connect your WhatsApp Business number</h1>${rows}</div></body></html>`;
+}
+
+function choosePage(key, token, choices) {
+  const esc = (v) => String(v == null ? '' : v).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  const items = choices
+    .map(
+      (c) => `<form method="post" action="/connect/finish?key=${encodeURIComponent(key)}" style="margin:10px 0">
+      <input type="hidden" name="token" value="${esc(token)}"><input type="hidden" name="waba_id" value="${esc(c.waba_id)}"><input type="hidden" name="phone_number_id" value="${esc(c.id)}">
+      <button style="background:#1877f2;color:#fff;border:0;border-radius:8px;padding:10px 16px;font-size:15px;cursor:pointer">Use ${esc(c.display_phone_number)} — ${esc(c.verified_name)}${c.is_on_biz_app ? ' (WhatsApp Business app)' : ''}</button></form>`
+    )
+    .join('');
+  return resultPage(null, null, `<p>We found more than one WhatsApp number. Choose your <b>official Organic Kashmir number</b>:</p>${items}`);
 }
 
 function handle(req, res, url) {
@@ -250,9 +300,27 @@ function handle(req, res, url) {
     complete({ code, redirect_uri: callbackUrl(req) })
       .then((out) => send(resultPage(out)))
       .catch((e) => {
+        if (e.message === 'CHOOSE') return send(choosePage(key, e.token, e.choices));
         console.error('Connect error:', e.message);
         send(resultPage(null, e.message));
       });
+    return true;
+  }
+
+  // Number chosen on the "choose" page
+  if (req.method === 'POST' && url.pathname === '/connect/finish') {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => {
+      const f = new URLSearchParams(Buffer.concat(chunks).toString('utf8'));
+      const send = (html) => {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+        res.end(html);
+      };
+      complete({ token: f.get('token'), waba_id: f.get('waba_id'), phone_number_id: f.get('phone_number_id') })
+        .then((out) => send(resultPage(out)))
+        .catch((e) => send(resultPage(null, e.message)));
+    });
     return true;
   }
 
@@ -271,7 +339,10 @@ function handle(req, res, url) {
       } catch (e) {
         console.error('Connect error:', e.message);
         res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: e.message }));
+        const msg = e.message === 'CHOOSE'
+          ? 'More than one number found: ' + e.choices.map((c) => c.display_phone_number).join(', ') + '. Use the blue button flow to choose.'
+          : e.message;
+        res.end(JSON.stringify({ error: msg }));
       }
     });
     return true;
