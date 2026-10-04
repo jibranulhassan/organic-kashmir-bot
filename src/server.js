@@ -4,6 +4,7 @@ const http = require('http');
 const crypto = require('crypto');
 const { respond, isAgentRequest } = require('./bot');
 const team = require('./team');
+const connect = require('./connect');
 const wa = require('./whatsapp');
 const handover = require('./handover');
 
@@ -11,6 +12,9 @@ const seen = new Map(); // Meta sometimes delivers the same message twice
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://localhost');
+
+  // Private page for connecting your WhatsApp Business app number (Coexistence)
+  if (connect.handle(req, res, url)) return;
 
   // Health check: open your server URL in a browser to confirm it's running
   if (req.method === 'GET' && url.pathname === '/') {

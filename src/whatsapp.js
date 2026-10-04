@@ -12,7 +12,7 @@ function endpoint() {
     };
   }
   return {
-    url: `https://graph.facebook.com/v21.0/${process.env.PHONE_NUMBER_ID}/messages`,
+    url: `https://graph.facebook.com/${process.env.GRAPH_VERSION || 'v24.0'}/${process.env.PHONE_NUMBER_ID}/messages`,
     headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`, 'Content-Type': 'application/json' },
   };
 }
