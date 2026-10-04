@@ -127,7 +127,9 @@ async function graph(method, path, token, body) {
   return { ok: res.ok, data };
 }
 
+const lastDiag = {};
 async function findNumbers(token, onlyWaba) {
+  for (const k of Object.keys(lastDiag)) delete lastDiag[k];
   const appToken = `${process.env.META_APP_ID}|${process.env.META_APP_SECRET}`;
   const wabas = new Set(onlyWaba ? [onlyWaba] : []);
 
@@ -135,6 +137,9 @@ async function findNumbers(token, onlyWaba) {
     // a) WhatsApp accounts this token was granted
     const r = await fetch(`${GRAPH}/debug_token?input_token=${encodeURIComponent(token)}&access_token=${encodeURIComponent(appToken)}`);
     const d = await r.json().catch(() => ({}));
+    lastDiag.scopes = ((d.data && d.data.granular_scopes) || []).map((g) => `${g.scope}${g.target_ids ? ' [' + g.target_ids.length + ' item(s)]' : ''}`);
+    lastDiag.tokenType = d.data && d.data.type;
+    lastDiag.debugError = d.error && d.error.message;
     for (const g of (d.data && d.data.granular_scopes) || []) {
       if (/^whatsapp_business_(management|messaging)$/.test(g.scope)) for (const id of g.target_ids || []) wabas.add(id);
     }
@@ -142,6 +147,8 @@ async function findNumbers(token, onlyWaba) {
   if (!wabas.size) {
     // b) WhatsApp accounts owned by / shared with the businesses this token can see
     const b = await graph('GET', '/me/businesses?fields=id,name', token);
+    lastDiag.businesses = ((b.data && b.data.data) || []).map((x) => x.name);
+    if (b.data && b.data.error) lastDiag.businessError = b.data.error.message;
     for (const biz of (b.data && b.data.data) || []) {
       for (const edge of ['owned_whatsapp_business_accounts', 'client_whatsapp_business_accounts']) {
         const w = await graph('GET', `/${biz.id}/${edge}?fields=id,name`, token);
@@ -184,7 +191,8 @@ async function complete({ code, waba_id, phone_number_id, page_url, redirect_uri
     const candidates = await findNumbers(token, waba_id);
     if (!candidates.length) {
       const e = new Error(
-        'Meta did not share any WhatsApp number with this app. Please run the connect steps again and make sure you finish them: enter the number, scan the QR code in the WhatsApp Business app and allow chat history.'
+        'Meta did not share any WhatsApp number with this app. Please run the connect steps again and make sure you finish them: enter the number, scan the QR code in the WhatsApp Business app and allow chat history.' +
+          '\n\nDetails for support: ' + JSON.stringify(lastDiag)
       );
       throw e;
     }
@@ -235,7 +243,7 @@ function resultPage(out, error, custom) {
        <p><b>WHATSAPP_TOKEN</b> (keep this private)<br><textarea readonly>${out.token}</textarea></p>
        <p>Make sure <b>SHARED_NUMBER</b> = <code>true</code>, then click <b>Save, rebuild and deploy</b>.</p>
        <p><b>Steps done:</b><br>${out.steps.map((s) => (s.ok ? '✅ ' : '⚠️ ') + s.name + (s.detail ? ' — ' + String(s.detail).replace(/</g, '&lt;') : '')).join('<br>')}</p>`
-    : `<p class="err">❌ ${String(error).replace(/</g, '&lt;')}</p><p><a href="javascript:history.go(-2)">Go back and try again</a></p>`;
+    : `<p class="err" style="white-space:pre-wrap">❌ ${String(error).replace(/</g, '&lt;')}</p><p><a href="javascript:history.go(-2)">Go back and try again</a></p>`;
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect WhatsApp — result</title>
 <style>body{font-family:system-ui,Segoe UI,Roboto,sans-serif;background:#f6f4ef;margin:0;padding:24px;color:#1d2a24}.card{max-width:640px;margin:32px auto;background:#fff;border-radius:14px;padding:28px}
 .ok{background:#e8f6ee;border-radius:8px;padding:12px}.err{background:#fdecec;border-radius:8px;padding:12px}textarea{width:100%;height:70px;font-family:Consolas,monospace;font-size:13px}p{line-height:1.55}</style>
