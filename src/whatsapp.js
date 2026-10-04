@@ -1,13 +1,27 @@
-// Sends messages through the WhatsApp Cloud API (Meta Graph API).
-const GRAPH = 'https://graph.facebook.com/v21.0';
+// Sends messages through the WhatsApp Cloud API.
+// Two ways to connect, chosen by your settings:
+//   • Meta directly:  WHATSAPP_TOKEN + PHONE_NUMBER_ID  (test number / dedicated number)
+//   • 360dialog:      D360_API_KEY                      (needed for Coexistence on your existing number)
+// The message format is identical; only the address and the key differ.
+
+function endpoint() {
+  if (process.env.D360_API_KEY) {
+    return {
+      url: (process.env.D360_BASE_URL || 'https://waba-v2.360dialog.io') + '/messages',
+      headers: { 'D360-API-KEY': process.env.D360_API_KEY, 'Content-Type': 'application/json' },
+    };
+  }
+  return {
+    url: `https://graph.facebook.com/v21.0/${process.env.PHONE_NUMBER_ID}/messages`,
+    headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`, 'Content-Type': 'application/json' },
+  };
+}
 
 async function send(to, message) {
-  const res = await fetch(`${GRAPH}/${process.env.PHONE_NUMBER_ID}/messages`, {
+  const { url, headers } = endpoint();
+  const res = await fetch(url, {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
-      'Content-Type': 'application/json',
-    },
+    headers,
     body: JSON.stringify({ messaging_product: 'whatsapp', recipient_type: 'individual', to, ...message }),
   });
   if (!res.ok) {
@@ -26,9 +40,10 @@ async function send(to, message) {
 
 async function markRead(messageId) {
   try {
-    await fetch(`${GRAPH}/${process.env.PHONE_NUMBER_ID}/messages`, {
+    const { url, headers } = endpoint();
+    await fetch(url, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`, 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ messaging_product: 'whatsapp', status: 'read', message_id: messageId }),
     });
   } catch (_) {}

@@ -31,7 +31,13 @@ async function getProduct(handle) {
 function simplify(p) {
   const variants = (p.variants || [])
     .filter((v) => v.available !== false) // products.json has "available"; product.json may not
-    .map((v) => ({ id: String(v.id), title: v.title, price: Number(v.price) }));
+    .map((v) => ({
+      id: String(v.id),
+      title: v.title,
+      price: Number(v.price),
+      compareAt: Number(v.compare_at_price) || 0, // original price, when on sale
+      image: v.featured_image && v.featured_image.src ? v.featured_image.src : null,
+    }));
   return {
     handle: p.handle,
     title: p.title,

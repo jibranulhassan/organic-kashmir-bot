@@ -8,7 +8,8 @@
 // All choices are shown as tappable buttons directly in the chat (no "View options" step).
 // WhatsApp allows max 3 buttons per message, so longer menus are split over a few messages.
 
-const { MENU, CORPORATE_EMAIL, BRAND, STORE_URL } = require('./config');
+const { MENU, CORPORATE_EMAIL, BRAND, STORE_URL, TAGLINE, DELIVERY_NOTE, WELCOME_IMAGE } = require('./config');
+const hours = require('./hours');
 const shop = require('./shopify');
 
 const cut = (s, n) => (s.length <= n ? s : s.slice(0, n - 1).trimEnd() + '…');
@@ -17,7 +18,7 @@ const rs = (n) => 'Rs. ' + Math.round(n).toLocaleString('en-IN');
 const PER_PAGE = 7; // items per page before a "More" button (7 + More + Back = 3 messages max)
 
 // ---------- message builders (WhatsApp Cloud API payloads) ----------
-function buttons(body, btns, header) {
+function buttons(body, btns, header, footer) {
   const m = {
     type: 'interactive',
     interactive: {
@@ -28,7 +29,9 @@ function buttons(body, btns, header) {
       },
     },
   };
-  if (header) m.interactive.header = { type: 'text', text: cut(header, 60) };
+  if (header && typeof header === 'object') m.interactive.header = header;
+  else if (header) m.interactive.header = { type: 'text', text: cut(header, 60) };
+  if (footer) m.interactive.footer = { text: cut(footer, 60) };
   return m;
 }
 
@@ -42,7 +45,7 @@ function buyLink(body, url, image) {
     interactive: {
       type: 'cta_url',
       body: { text: body },
-      footer: { text: 'Type "menu" to keep shopping' },
+      footer: { text: 'Secure checkout on organickashmir.com' },
       action: { name: 'cta_url', parameters: { display_text: 'Buy Now', url } },
     },
   };
@@ -84,7 +87,7 @@ function paged(items, pageNo, moreId, back) {
   const start = pageNo * PER_PAGE;
   const rest = items.slice(start);
   const out = rest.length > PER_PAGE + 1 ? rest.slice(0, PER_PAGE) : rest;
-  if (rest.length > out.length) out.push({ id: moreId, title: '➡️ More' });
+  if (rest.length > out.length) out.push({ id: moreId, title: 'More ›' });
   if (back) out.push(back);
   return out;
 }
@@ -112,32 +115,64 @@ async function findProduct(col, handle) {
 }
 
 // ---------- screens (each returns an array of messages) ----------
-function welcome() {
+const firstName = (name) => (name || '').trim().split(/\s+/)[0] || '';
+const MAIN = { id: 'start', title: '🏠 Main Menu' };
+const AGENT = { id: 'agent', title: '💬 Talk to Executive' };
+
+function welcome(note, name) {
+  const hello = firstName(name) ? `Hello ${firstName(name)},` : 'Hello,';
+  const body =
+    (note ? note + '\n\n' : '') +
+    `${hello}\nWelcome to *${BRAND}*.\n\n${TAGLINE}\n\nHow may we assist you today?`;
   return [
     buttons(
-      `Welcome to *${BRAND}* 🌸\nPure saffron, honey & more — straight from Kashmir.\n\nAre you shopping as a retail customer or contacting us for corporate / bulk orders?`,
+      body,
       [
-        { id: 'retail', title: '🛍️ Retail Customer' },
-        { id: 'corporate', title: '🏢 Corporate' },
-      ]
+        { id: 'retail', title: '🛍️ Shop Products' },
+        { id: 'corporate', title: '🏢 Corporate & Bulk' },
+        AGENT,
+      ],
+      WELCOME_IMAGE ? { type: 'image', image: { link: WELCOME_IMAGE } } : null,
+      DELIVERY_NOTE || null
     ),
   ];
 }
 
 function corporate() {
   return [
-    text(
-      `Thank you for your interest in partnering with *${BRAND}* 🤝\n\nFor corporate gifting, bulk and wholesale enquiries, please email us at:\n📧 *${CORPORATE_EMAIL}*\n\nOur team will get back to you shortly.`
+    buttons(
+      `*Corporate & Bulk Orders*\n\n${BRAND} partners with hotels, businesses and gifting teams for curated hampers and bulk supplies of saffron, honey and other Kashmiri produce.\n\nPlease email your requirement — products, quantities and timeline — to:\n*${CORPORATE_EMAIL}*\n\nOur corporate team will get back to you promptly. You may also speak with an executive here.`,
+      [AGENT, MAIN]
     ),
-    buttons('Anything else?', [{ id: 'start', title: '🏠 Main menu' }]),
   ];
+}
+
+const AGENT_TEXT = /^(3|agent|executive|human|talk to (an? )?(executive|agent|human|someone|team))$/i;
+function isAgentRequest(input) {
+  return input.replyId === 'agent' || (!input.replyId && AGENT_TEXT.test((input.text || '').trim()));
+}
+
+function agent(name) {
+  const thanks = firstName(name) ? `Thank you, ${firstName(name)}.` : 'Thank you.';
+  const when = hours.isOpen()
+    ? 'An executive will reply to you in this chat shortly.'
+    : `Our team is available ${hours.describe()} (IST). An executive will reply to you in this chat as soon as we are back.`;
+  return [
+    text(
+      `🔔 *Executive requested*\n\n${thanks} Your request has been passed to our team. ${when}\n\nYou are welcome to share your question or order details here in the meantime.\n\n_Type *menu* at any time to return to the main menu._`
+    ),
+  ];
+}
+
+function thanks() {
+  return [buttons(`You're most welcome! It was a pleasure assisting you. 🌸`, [{ id: 'retail', title: '🛍️ Shop Products' }, MAIN])];
 }
 
 function categories() {
   return choices(
-    'Choose a category to browse 👇',
+    'Please choose a category.',
     MENU.map((c) => ({ id: `cat:${c.key}`, title: c.title })),
-    { header: 'Shop by category', moreText: 'More categories 👇' }
+    { header: 'Shop by Category', moreText: 'More categories' }
   );
 }
 
@@ -146,12 +181,12 @@ async function category(key) {
   if (!c) return categories();
   if (!c.children) return collection(c.collection, 0);
   return choices(
-    'Pick a sub-category 👇',
+    'Please select a collection.',
     [
       ...c.children.map((s) => ({ id: `col:${s.collection}:0`, title: s.title })),
-      { id: 'retail', title: '⬅️ Back' },
+      { id: 'retail', title: '‹ Back' },
     ],
-    { header: c.title }
+    { header: c.title, moreText: 'More collections' }
   );
 }
 
@@ -159,14 +194,14 @@ async function collection(handle, pageNo) {
   const { cat, sub } = parentOfCollection(handle);
   const title = (sub || cat || { title: 'Products' }).title;
   const products = await shop.getCollectionProducts(handle);
-  const back = sub ? { id: `cat:${cat.key}`, title: '⬅️ Back' } : { id: 'retail', title: '⬅️ Back' };
+  const back = sub ? { id: `cat:${cat.key}`, title: '‹ Back' } : { id: 'retail', title: '‹ Back' };
 
   if (!products.length) {
     return [
-      buttons(`Sorry, nothing in *${title}* is in stock right now.`, [
-        back,
-        { id: 'start', title: '🏠 Main menu' },
-      ]),
+      buttons(
+        `The *${title}* collection is currently out of stock. Please explore our other categories or speak with an executive.`,
+        [back, AGENT]
+      ),
     ];
   }
 
@@ -178,75 +213,97 @@ async function collection(handle, pageNo) {
       line: `${p.title} — ${p.variants.length > 1 ? 'from ' : ''}${rs(min)}`,
     };
   });
-  return choices('Choose a product 👇', paged(items, pageNo, `col:${handle}:${pageNo + 1}`, back), {
+  return choices('Please choose a product.', paged(items, pageNo, `col:${handle}:${pageNo + 1}`, back), {
     header: title,
     startNum: pageNo * PER_PAGE,
+    moreText: 'More products',
   });
 }
 
 async function product(col, handle, pageNo = 0) {
   const p = await findProduct(col, handle);
   if (!p || !p.variants.length) {
-    return [buttons('Sorry, this product is currently unavailable.', [{ id: 'start', title: '🏠 Main menu' }])];
+    return [buttons('This product is currently unavailable. Please explore our other products.', [{ id: 'retail', title: '🛍️ Shop Products' }, AGENT])];
   }
   if (p.variants.length === 1) return variant(col, handle, p.variants[0].id, p);
 
   const items = p.variants.map((v) => ({
     id: `var:${col || '-'}:${handle}:${v.id}`,
     title: v.title,
-    line: `${v.title} — ${rs(v.price)}`,
+    line: `${v.title} — ${rs(v.price)}${v.compareAt > v.price ? ` ~${rs(v.compareAt)}~` : ''}`,
   }));
-  const back = col ? { id: `col:${col}:0`, title: '⬅️ Back' } : null;
+  const back = col ? { id: `col:${col}:0`, title: '‹ Back' } : null;
   return choices(
-    `Choose a size for *${p.title}* 👇`,
+    `Please select a size for *${p.title}*.`,
     paged(items, pageNo, `prod:${col || '-'}:${handle}:${pageNo + 1}`, back),
-    { header: p.title, startNum: pageNo * PER_PAGE }
+    { header: p.title, startNum: pageNo * PER_PAGE, moreText: 'More sizes' }
   );
 }
 
 async function variant(col, handle, variantId, known) {
   const p = known || (await findProduct(col, handle));
   const v = p && p.variants.find((x) => x.id === String(variantId));
-  if (!v) return [buttons('Sorry, that option is no longer available.', [{ id: 'start', title: '🏠 Main menu' }])];
-  const name = v.title && v.title !== 'Default Title' ? `${p.title} — ${v.title}` : p.title;
+  if (!v) return [buttons('This option is no longer available. Please choose another.', [{ id: 'retail', title: '🛍️ Shop Products' }, MAIN])];
+
+  const hasSize = v.title && v.title !== 'Default Title';
+  let price = `*${rs(v.price)}*`;
+  if (v.compareAt > v.price) {
+    const off = Math.round((1 - v.price / v.compareAt) * 100);
+    price += `  ~${rs(v.compareAt)}~  (${off}% off)`;
+  }
+  const lines = [`*${p.title}*`, ''];
+  if (hasSize) lines.push(`Size: ${v.title}`);
+  lines.push(`Price: ${price}`, '');
+  lines.push('✓ Sourced directly from Kashmir');
+  if (DELIVERY_NOTE) lines.push(`✓ ${DELIVERY_NOTE}`);
+  lines.push('', 'Tap *Buy Now* to complete your purchase on our website.');
+
   return [
-    buyLink(
-      `*${name}*\n💰 ${rs(v.price)}\n\nTap *Buy Now* to open this product on our website with your selection ready to add to cart. 🛒`,
-      shop.productUrl(handle, v.id),
-      p.image
-    ),
+    buyLink(lines.join('\n'), shop.productUrl(handle, v.id), v.image || p.image),
+    buttons('Would you like to continue?', [
+      { id: col ? `col:${col}:0` : 'retail', title: '🛍️ Keep Shopping' },
+      AGENT,
+      MAIN,
+    ]),
   ];
 }
 
 // ---------- router ----------
-// input: { text?: string, replyId?: string }  -> returns an array of messages to send
+// input: { text?, replyId?, note?, name? }  -> returns an array of messages to send
+const THANKS = /^(thanks?|thank you|thank u|thx|ty|ok(ay)?( thanks?)?|great|done|👍|🙏)[\s!.]*$/i;
+
 async function respond(input) {
   const id = input.replyId;
   const t = (input.text || '').trim().toLowerCase();
 
   try {
     if (!id) {
-      if (/^(retail|1)$/.test(t)) return categories();
+      if (/^(retail|shop|1)$/.test(t)) return categories();
       if (/^(corporate|bulk|2)$/.test(t)) return corporate();
-      return welcome();
+      if (AGENT_TEXT.test(t)) return agent(input.name);
+      if (THANKS.test(t)) return thanks();
+      return welcome(input.note, input.name);
     }
-    if (id === 'start') return welcome();
+    if (id === 'start') return welcome(null, input.name);
     if (id === 'retail') return categories();
     if (id === 'corporate') return corporate();
+    if (id === 'agent') return agent(input.name);
 
     const [kind, a, b, c] = id.split(':');
     if (kind === 'cat') return await category(a);
     if (kind === 'col') return await collection(a, Number(b) || 0);
     if (kind === 'prod') return await product(a === '-' ? null : a, b, Number(c) || 0);
     if (kind === 'var') return await variant(a === '-' ? null : a, b, c);
-    return welcome();
+    return welcome(null, input.name);
   } catch (err) {
     console.error('Bot error:', err);
     return [
-      text(`Sorry, something went wrong on our side 🙏\nYou can browse all products here: ${STORE_URL}`),
-      buttons('Try again?', [{ id: 'start', title: '🏠 Main menu' }]),
+      buttons(
+        `We're sorry — we couldn't load that just now. Please try again, or browse our full range at ${STORE_URL}`,
+        [MAIN, AGENT]
+      ),
     ];
   }
 }
 
-module.exports = { respond };
+module.exports = { respond, isAgentRequest };
