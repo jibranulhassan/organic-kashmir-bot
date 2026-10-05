@@ -90,4 +90,8 @@ function handle(req, res, url) {
   return true;
 }
 
-module.exports = { handle, buildCsv };
+function clearCache() {
+  cache = { at: 0, csv: '' };
+}
+
+module.exports = { handle, buildCsv, clearCache };

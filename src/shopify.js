@@ -2,13 +2,15 @@
 // so the WhatsApp menu always matches the website (new products, prices, stock).
 const { STORE_URL } = require('./config');
 
-const CACHE_MS = 10 * 60 * 1000; // 10 minutes
+// How long product data is kept before re-reading the website (default 2 minutes)
+const CACHE_MS = Number(process.env.CACHE_MINUTES || 2) * 60 * 1000;
 const cache = new Map();
 
 async function getJson(path) {
   const hit = cache.get(path);
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.data;
-  const res = await fetch(STORE_URL + path, { headers: { Accept: 'application/json' } });
+  const sep = path.includes('?') ? '&' : '?';
+  const res = await fetch(STORE_URL + path + sep + '_=' + Date.now(), { headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' } });
   if (!res.ok) throw new Error(`Shopify ${path} -> HTTP ${res.status}`);
   const data = await res.json();
   cache.set(path, { at: Date.now(), data });
@@ -60,4 +62,8 @@ function productUrl(handle, variantId) {
   return `${STORE_URL}/products/${handle}?${q.toString()}`;
 }
 
-module.exports = { getCollectionProducts, getProduct, productUrl, checkoutUrl, _cache: cache };
+function clearCache() {
+  cache.clear();
+}
+
+module.exports = { getCollectionProducts, getProduct, productUrl, checkoutUrl, clearCache, _cache: cache };

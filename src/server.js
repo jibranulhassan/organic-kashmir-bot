@@ -17,6 +17,17 @@ const server = http.createServer((req, res) => {
   // Private page for connecting your WhatsApp Business app number (Coexistence)
   if (connect.handle(req, res, url)) return;
 
+  // Refresh link: makes the bot re-read products from the website immediately
+  //   https://YOUR-BOT.onrender.com/refresh?key=ADMIN_KEY
+  if (req.method === 'GET' && url.pathname === '/refresh') {
+    if (!process.env.ADMIN_KEY || url.searchParams.get('key') !== process.env.ADMIN_KEY) { res.writeHead(404); return res.end(); }
+    require('./shopify').clearCache();
+    feed.clearCache();
+    console.log('🔄 Product data refreshed');
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    return res.end('<meta name="viewport" content="width=device-width,initial-scale=1"><body style="font-family:system-ui;padding:40px;text-align:center"><h2>✅ Products refreshed</h2><p>The WhatsApp bot will now show the latest products from organickashmir.com.</p></body>');
+  }
+
   // "Call Now" page: hands the number to the phone's dialer
   if (req.method === 'GET' && url.pathname === '/call') {
     const raw = (process.env.CALL_NUMBER || '').replace(/[^\d+]/g, '');
