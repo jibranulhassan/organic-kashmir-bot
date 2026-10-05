@@ -3,7 +3,7 @@
 //
 // Rules in shared mode:
 //  • Customer taps one of the bot's buttons          -> bot always answers
-//  • Customer types "menu"                          -> bot always answers (and un-pauses)
+//  • Customer types "menu" or says hi/hello/salam   -> bot restarts the chat (and un-pauses)
 //  • Someone from your team replied from the app    -> bot stays silent for that customer
 //                                                      for HUMAN_PAUSE_HOURS (default 12)
 //  • Customer says hi / hello / salam etc.          -> bot shows the welcome menu
@@ -39,7 +39,8 @@ function decide(customer, input) {
 
   const text = (input.text || '').trim();
   if (input.replyId || input.agent) return { reply: true };
-  if (/^menu$/i.test(text)) {
+  // "hi", "hello", "menu" etc. always restart the chat with the bot (even after the team replied)
+  if (/^menu$/i.test(text) || GREETING.test(text)) {
     staffReplied.delete(customer);
     return { reply: true };
   }

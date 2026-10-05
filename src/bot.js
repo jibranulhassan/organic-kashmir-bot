@@ -1,8 +1,7 @@
 // Conversation logic. Stateless: every button carries an ID that says where
 // the customer is (e.g. "col:kashmiri-saffron:0"), so no database is needed.
 //
-// Flow:  any message -> [Retail | Corporate]
-//        Corporate   -> email address
+// Flow:  any message / "hi" -> [Shop Products | Talk to Executive]
 //        Retail      -> Category -> Sub-category -> Product -> Size/variant -> "Buy Now" link
 //
 // All choices are shown as tappable buttons directly in the chat (no "View options" step).
@@ -129,7 +128,6 @@ function welcome(note, name) {
       body,
       [
         { id: 'retail', title: '🛍️ Shop Products' },
-        { id: 'corporate', title: '🏢 Corporate & Bulk' },
         AGENT,
       ],
       WELCOME_IMAGE ? { type: 'image', image: { link: WELCOME_IMAGE } } : null,
@@ -147,7 +145,7 @@ function corporate() {
   ];
 }
 
-const AGENT_TEXT = /^(3|agent|executive|human|talk to (an? )?(executive|agent|human|someone|team))$/i;
+const AGENT_TEXT = /^(2|3|agent|executive|human|talk to (an? )?(executive|agent|human|someone|team))$/i;
 function isAgentRequest(input) {
   return input.replyId === 'agent' || (!input.replyId && AGENT_TEXT.test((input.text || '').trim()));
 }
@@ -279,7 +277,7 @@ async function respond(input) {
   try {
     if (!id) {
       if (/^(retail|shop|1)$/.test(t)) return categories();
-      if (/^(corporate|bulk|2)$/.test(t)) return corporate();
+      if (/^(corporate|bulk)$/.test(t)) return corporate();
       if (AGENT_TEXT.test(t)) return agent(input.name);
       if (THANKS.test(t)) return thanks();
       return welcome(input.note, input.name);
