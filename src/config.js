@@ -23,6 +23,10 @@ module.exports = {
   // e.g. Shopify's Facebook channel: shopify_{product_id}_{variant_id} or shopify_IN_{product_id}_{variant_id}
   CATALOG_ITEM_ID: process.env.CATALOG_ITEM_ID || 'ok_{variant_id}',
 
+  // Phone number customers can call from "Talk to Executive" (with country code, e.g. +919876543210).
+  // Leave empty to skip the Chat/Call choice and go straight to chat.
+  CALL_NUMBER: process.env.CALL_NUMBER || '',
+
   // Team availability (India time). Example: BUSINESS_HOURS=10:00-19:00  BUSINESS_DAYS=Mon-Sat
   // If not set, the bot never mentions working hours.
   BUSINESS_HOURS: process.env.BUSINESS_HOURS || '',

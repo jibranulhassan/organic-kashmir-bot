@@ -9,7 +9,7 @@
 // Carousels: one message, 2–10 swipeable cards. If WhatsApp ever rejects a carousel,
 // the same items are sent as a single list instead (see _fallbacks / whatsapp.js).
 
-const { MENU, CORPORATE_EMAIL, BRAND, TAGLINE, DELIVERY_NOTE, WELCOME_IMAGE, STORE_URL, CATALOG_ID, CATALOG_ITEM_ID } = require('./config');
+const { MENU, CORPORATE_EMAIL, BRAND, TAGLINE, DELIVERY_NOTE, WELCOME_IMAGE, STORE_URL, CATALOG_ID, CATALOG_ITEM_ID, CALL_NUMBER } = require('./config');
 const hours = require('./hours');
 const shop = require('./shopify');
 
@@ -182,8 +182,46 @@ function corporate() {
 }
 
 const AGENT_TEXT = /^(2|3|agent|executive|human|talk to (an? )?(executive|agent|human|someone|team))$/i;
+// True when the customer actually asked to CHAT with a person (alerts the team and pauses the bot)
 function isAgentRequest(input) {
+  if (input.replyId === 'agent_chat') return true;
+  if (CALL_NUMBER) return false; // with a call option, "Talk to Executive" first asks Chat or Call
   return input.replyId === 'agent' || (!input.replyId && AGENT_TEXT.test((input.text || '').trim()));
+}
+
+// Talk to Executive -> Chat or Call
+function agentChoice(name) {
+  if (!CALL_NUMBER) return agent(name);
+  const when = hours.describe() ? `\n\nOur team is available ${hours.describe()} (IST).` : '';
+  return [
+    buttons(`*Talk to an Executive* 👋\n\nHow would you like to reach us?${when}`, [
+      { id: 'agent_chat', title: '💬 Chat with us' },
+      { id: 'agent_call', title: '📞 Call us' },
+      MAIN,
+    ]),
+  ];
+}
+
+function callUs() {
+  const num = CALL_NUMBER.replace(/[^\d+]/g, '');
+  const pretty = num.startsWith('+') ? num : '+' + num;
+  const when = hours.describe() ? `\nAvailable ${hours.describe()} (IST).` : '';
+  return [
+    text(`📞 *Call us*\n\nTap the number to call our team:\n*${pretty}*${when}\n\nYou can also save our contact card below.`),
+    {
+      type: 'contacts',
+      contacts: [
+        {
+          name: { formatted_name: BRAND, first_name: BRAND },
+          org: { company: BRAND },
+          phones: [{ phone: pretty, type: 'WORK' }],
+          emails: [{ email: CORPORATE_EMAIL, type: 'WORK' }],
+          urls: [{ url: STORE_URL, type: 'WORK' }],
+        },
+      ],
+    },
+    buttons('Anything else?', [{ id: 'agent_chat', title: '💬 Chat with us' }, SHOP, MAIN]),
+  ];
 }
 
 function agent(name) {
@@ -285,24 +323,70 @@ async function product(catKey, handle, known) {
     return [buyCard(lines.join('\n'), shop.productUrl(p.handle, v.id), img(v.image || p.image)), afterBuy];
   }
 
-  const sizes = p.variants.slice(0, 10);
-  const cards = sizes.map((v) => ({
-    image: img(v.image || p.image),
-    body: `*${p.title}*\nSize: ${v.title}\n${priceLine(v)}`,
-    button: { url: shop.productUrl(p.handle, v.id), title: 'Buy Now' },
-  }));
-  // Fallback if carousels are rejected: list of sizes -> single buy card
-  const fb = list(p.title, `Please select a size for *${p.title}*.`, 'Choose size', sizes.map((v) => ({ id: `var:${catKey || '-'}:${p.handle}:${v.id}`, title: v.title, desc: rs(v.price) })));
+  // Several sizes: one photo card listing every size & price, then the size choice
+  const varId = (v) => `var:${catKey || '-'}:${p.handle}:${v.id}`;
+  const sizeLines = p.variants.map((v) => `• ${v.title} — ${priceLine(v)}`).join('\n');
+  const body = cut(`*${p.title}*\n\n${sizeLines}${DELIVERY_NOTE ? `\n\n✓ ${DELIVERY_NOTE}` : ''}`, 1024);
+  const photo = { type: 'image', image: { link: img(p.image) } };
+  if (p.variants.length <= 3) {
+    const short = (v) => { const l = `${v.title} · ${rs(v.price)}`; return l.length <= 20 ? l : cut(v.title, 20); };
+    return [buttons(body + '\n\nPlease tap your size 👇', p.variants.map((v) => ({ id: varId(v), title: short(v) })), photo)];
+  }
   return [
-    carousel(
-      `*${p.title}*\nSwipe to choose your size, then tap *Buy Now* to complete your purchase on our website.${DELIVERY_NOTE ? `\n\n✓ ${DELIVERY_NOTE}` : ''}`,
-      cards,
-      fb
-    ),
-    afterBuy,
+    buttons(body, [{ id: catKey ? `cat:${catKey}:0` : 'retail', title: '‹ Back' }], photo),
+    list(p.title, `Please choose your size for *${p.title}*.`, 'Choose size', p.variants.slice(0, 10).map((v) => ({ id: varId(v), title: v.title, desc: rs(v.price) + (v.compareAt > v.price ? `  (was ${rs(v.compareAt)})` : '') }))),
   ];
 }
 
+// ================= Vertical photo cards (default display) =================
+const photoHeader = (url) => ({ type: 'image', image: { link: img(url) } });
+
+// Shop Products -> one photo card per category, stacked vertically
+async function categoriesStack() {
+  const out = [text('*Shop by Category* 🛍️\nTap *Explore* on any collection below 👇')];
+  for (const c of MENU) {
+    let photo = null;
+    try {
+      const first = (await shop.getCollectionProducts(collectionsOf(c)[0]))[0];
+      photo = first && first.image;
+    } catch (_) {}
+    out.push(buttons(`*${c.title}*\n${c.description || ''}`, [{ id: `cat:${c.key}:0`, title: 'Explore' }], photoHeader(photo)));
+  }
+  return out;
+}
+
+const STACK = 8; // product cards per page
+
+// Category -> one photo card per product, stacked vertically
+async function categoryStack(key, pageNo = 0) {
+  const c = findCategory(key);
+  if (!c) return categoriesStack();
+  const products = await categoryProducts(c);
+  if (!products.length) {
+    return [buttons(`Our *${c.title}* range is currently out of stock. Please explore our other collections or speak with an executive.`, [SHOP, AGENT])];
+  }
+  const start = pageNo * STACK;
+  const pageItems = products.slice(start, start + STACK);
+  const out = [text(`*${c.title}*\n${products.length} product${products.length > 1 ? 's' : ''}${pageNo ? ` · page ${pageNo + 1}` : ''} 👇`)];
+  for (const p of pageItems) {
+    if (p.variants.length === 1) {
+      const v = p.variants[0];
+      const m = buyCard(`*${p.title}*${isSized(v) ? `\nSize: ${v.title}` : ''}\n${priceLine(v)}`, shop.productUrl(p.handle, v.id), img(v.image || p.image));
+      delete m.interactive.footer;
+      out.push(m);
+    } else {
+      const sale = p.variants.some((v) => v.compareAt > v.price) ? '  🏷️ On sale' : '';
+      out.push(
+        buttons(`*${p.title}*\nFrom ${rs(minPrice(p))} · ${p.variants.length} sizes${sale}`, [{ id: `prod:${key}:${p.handle}`, title: 'Choose Size' }], photoHeader(p.image))
+      );
+    }
+  }
+  const nav = [];
+  if (products.length > start + STACK) nav.push({ id: `cat:${key}:${pageNo + 1}`, title: 'More products ›' });
+  nav.push({ id: 'retail', title: '🛍️ All Collections' }, AGENT);
+  out.push(buttons('Looking for something else?', nav.slice(0, 3)));
+  return out;
+}
 
 // ================= WhatsApp Catalog (vertical list with photos + cart) =================
 const retailerId = (p, v) => CATALOG_ITEM_ID.replace('{product_id}', p.id).replace('{variant_id}', v.id);
@@ -338,7 +422,7 @@ const HOW_TO_BUY =
 
 // Shop Products -> catalog overview (all categories, a few products each) + list to open a full collection
 async function categories() {
-  if (!CATALOG_ID) return categoriesCards();
+  if (!CATALOG_ID) return categoriesStack();
   const perCat = Math.max(1, Math.floor(30 / MENU.length));
   const sections = [];
   for (const c of MENU) {
@@ -361,7 +445,7 @@ async function categories() {
 
 // Category -> catalog list: one section per product, every size listed (with photos & prices)
 async function category(key, pageNo = 0) {
-  if (!CATALOG_ID) return categoryCards(key, pageNo);
+  if (!CATALOG_ID) return categoryStack(key, pageNo);
   const c = findCategory(key);
   if (!c) return categories();
   const products = await categoryProducts(c);
@@ -469,14 +553,16 @@ async function respond(input) {
     if (!id) {
       if (/^(retail|shop|1)$/.test(t)) return await categories();
       if (/^(corporate|bulk)$/.test(t)) return corporate();
-      if (AGENT_TEXT.test(t)) return agent(input.name);
+      if (AGENT_TEXT.test(t)) return agentChoice(input.name);
       if (THANKS.test(t)) return thanks();
       return welcome(input.note, input.name);
     }
     if (id === 'start') return welcome(null, input.name);
     if (id === 'retail') return await categories();
     if (id === 'corporate') return corporate();
-    if (id === 'agent') return agent(input.name);
+    if (id === 'agent') return agentChoice(input.name);
+    if (id === 'agent_chat') return agent(input.name);
+    if (id === 'agent_call') return callUs();
 
     const [kind, a, b, c] = id.split(':');
     if (kind === 'cat') return await category(a, Number(b) || 0);
