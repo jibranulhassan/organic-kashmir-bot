@@ -25,9 +25,38 @@ async function getCollectionProducts(handle) {
     .filter((p) => p.variants.length > 0);
 }
 
+// One product by handle. Uses the storefront ".js" endpoint because it says which sizes are in stock.
 async function getProduct(handle) {
-  const data = await getJson(`/products/${encodeURIComponent(handle)}.json`);
-  return data.product ? simplify(data.product) : null;
+  let data;
+  try {
+    data = await getJson(`/products/${encodeURIComponent(handle)}.js`);
+  } catch (e) {
+    if (/HTTP 404/.test(e.message)) return null; // product removed or hidden
+    throw e;
+  }
+  return data && data.id ? simplifyJs(data) : null;
+}
+
+const https = (u) => (u ? (String(u).startsWith('//') ? 'https:' + u : String(u)) : null);
+
+// Same shape as simplify(), from the ".js" format (prices in paise, image URLs as strings)
+function simplifyJs(p) {
+  const variants = (p.variants || [])
+    .filter((v) => v.available !== false)
+    .map((v) => ({
+      id: String(v.id),
+      title: v.title,
+      price: Number(v.price) / 100,
+      compareAt: Number(v.compare_at_price) / 100 || 0,
+      image: v.featured_image && v.featured_image.src ? https(v.featured_image.src) : null,
+    }));
+  return {
+    id: String(p.id),
+    handle: p.handle,
+    title: p.title,
+    image: https(p.featured_image || (p.images && p.images[0])),
+    variants,
+  };
 }
 
 function simplify(p) {

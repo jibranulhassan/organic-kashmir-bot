@@ -126,22 +126,38 @@ function cardText(s) {
 
 // ---------- catalog helpers ----------
 const findCategory = (key) => MENU.find((c) => c.key === key);
-const collectionsOf = (c) => (c.collection ? [c.collection] : (c.children || []).map((s) => s.collection));
+const collectionsOf = (c) => (c.collection ? [c.collection] : (c.children || []).map((s) => s.collection)).filter(Boolean);
 
-// All in-stock products of a category (sub-collections merged, no duplicates)
+// The links that make up a category, in website-menu order: collections and/or single products
+const linksOf = (c) => (c.children && c.children.length ? c.children : [c]).filter((l) => l.collection || l.product);
+
+// Products for one menu link (a whole collection, or a single product)
+async function linkProducts(l) {
+  try {
+    if (l.product) {
+      const p = await shop.getProduct(l.product);
+      return p && p.variants.length ? [p] : [];
+    }
+    return await shop.getCollectionProducts(l.collection);
+  } catch (e) {
+    console.error(`Menu link ${l.product || l.collection}:`, e.message);
+    return [];
+  }
+}
+
+// All in-stock products of a category, in the same order as the website menu (no duplicates)
 async function categoryProducts(c) {
+  const lists = await Promise.all(linksOf(c).map(linkProducts));
   const seen = new Set();
   const out = [];
-  for (const col of collectionsOf(c)) {
-    let items = [];
-    try {
-      items = await shop.getCollectionProducts(col);
-    } catch (e) {
-      console.error(`Collection ${col}:`, e.message);
-    }
-    for (const p of items) if (!seen.has(p.handle)) seen.add(p.handle), out.push(p);
-  }
+  for (const items of lists) for (const p of items) if (!seen.has(p.handle)) seen.add(p.handle), out.push(p);
   return out;
+}
+
+// Photo for a category card: its first product's picture
+async function categoryPhoto(c) {
+  const first = (await categoryProducts(c))[0];
+  return first ? first.image : null;
 }
 
 async function findProduct(catKey, handle) {
@@ -230,15 +246,8 @@ function thanks() {
 
 // Shop Products -> category carousel (photo of a product from each category)
 async function categoriesCards() {
-  const cards = [];
-  for (const c of MENU) {
-    let photo = null;
-    try {
-      const first = (await shop.getCollectionProducts(collectionsOf(c)[0]))[0];
-      photo = first && first.image;
-    } catch (_) {}
-    cards.push({ image: img(photo), body: `*${c.title}*\n${c.description || ''}`, button: { id: `cat:${c.key}:0`, title: 'Explore' } });
-  }
+  const photos = await Promise.all(MENU.map(categoryPhoto));
+  const cards = MENU.map((c, i) => ({ image: img(photos[i]), body: `*${c.title}*\n${c.description || ''}`, button: { id: `cat:${c.key}:0`, title: 'Explore' } }));
   return [
     carousel(
       `*Shop by Category* 🛍️\nSwipe to browse our collections and tap *Explore*.`,
@@ -332,14 +341,8 @@ const photoHeader = (url) => ({ type: 'image', image: { link: img(url) } });
 // Shop Products -> one photo card per category, stacked vertically
 async function categoriesStack() {
   const out = [text('*Shop by Category* 🛍️\nTap *Explore* on any collection below 👇')];
-  for (const c of MENU) {
-    let photo = null;
-    try {
-      const first = (await shop.getCollectionProducts(collectionsOf(c)[0]))[0];
-      photo = first && first.image;
-    } catch (_) {}
-    out.push(buttons(`*${c.title}*\n${c.description || ''}`, [{ id: `cat:${c.key}:0`, title: 'Explore' }], photoHeader(photo)));
-  }
+  const photos = await Promise.all(MENU.map(categoryPhoto));
+  MENU.forEach((c, i) => out.push(buttons(`*${c.title}*${c.description ? '\n' + c.description : ''}`, [{ id: `cat:${c.key}:0`, title: 'Explore' }], photoHeader(photos[i]))));
   return out;
 }
 
@@ -353,6 +356,8 @@ async function categoryStack(key, pageNo = 0) {
   if (!products.length) {
     return [buttons(`Our *${c.title}* range is currently out of stock. Please explore our other collections or speak with an executive.`, [SHOP, AGENT])];
   }
+  // A category that is a single product (e.g. Shilajit): open it straight away
+  if (products.length === 1) return product(key, products[0].handle, products[0]);
   const start = pageNo * STACK;
   const pageItems = products.slice(start, start + STACK);
   const out = [text(`*${c.title}*\n${products.length} product${products.length > 1 ? 's' : ''}${pageNo ? ` · page ${pageNo + 1}` : ''} 👇`)];
