@@ -26,24 +26,32 @@ function endpoint() {
 }
 
 async function send(to, message) {
+  const { _fallbacks, ...payload } = message; // _fallbacks = simpler versions to try if this one is rejected
   const { url, headers } = endpoint();
   const res = await fetch(url, {
     method: 'POST',
     headers,
-    body: JSON.stringify({ messaging_product: 'whatsapp', recipient_type: 'individual', to, ...message }),
+    body: JSON.stringify({ messaging_product: 'whatsapp', recipient_type: 'individual', to, ...payload }),
   });
-  if (!res.ok) {
-    const err = await res.text();
-    console.error(`WhatsApp send failed (${res.status}):`, err);
+  if (res.ok) return true;
 
-    // If an image header can't be loaded, retry the Buy Now message without the image.
-    if (message.interactive && message.interactive.header && message.interactive.header.type === 'image') {
-      const copy = JSON.parse(JSON.stringify(message));
-      delete copy.interactive.header;
-      return send(to, copy);
-    }
+  const err = await res.text();
+  console.error(`WhatsApp send failed (${res.status}) for ${payload.interactive ? payload.interactive.type : payload.type}:`, err);
+
+  // Try the next simpler version (e.g. carousel -> list)
+  if (_fallbacks && _fallbacks.length) {
+    const [next, ...rest] = _fallbacks;
+    console.log(`   retrying as ${next.interactive ? next.interactive.type : next.type}`);
+    return send(to, rest.length ? { ...next, _fallbacks: rest } : next);
   }
-  return res.ok;
+
+  // If an image header can't be loaded, retry without the image.
+  if (payload.interactive && payload.interactive.header && payload.interactive.header.type === 'image') {
+    const copy = JSON.parse(JSON.stringify(payload));
+    delete copy.interactive.header;
+    return send(to, copy);
+  }
+  return false;
 }
 
 async function markRead(messageId) {

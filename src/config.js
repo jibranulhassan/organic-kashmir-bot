@@ -5,7 +5,7 @@
 
 module.exports = {
   STORE_URL: (process.env.STORE_URL || 'https://www.organickashmir.com').replace(/\/$/, ''),
-  CORPORATE_EMAIL: process.env.CORPORATE_EMAIL || 'info@organickashmir.com',
+  CORPORATE_EMAIL: process.env.CORPORATE_EMAIL || 'hello@organickashmir.com',
   BRAND: 'Organic Kashmir',
   TAGLINE: 'Pure, hand-picked produce from the valleys of Kashmir — saffron, Himalayan honey, forest herbs and more.',
   // Shown under the welcome message and on product cards. Leave '' to hide.

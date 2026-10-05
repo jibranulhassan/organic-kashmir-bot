@@ -92,8 +92,12 @@ async function handle(msg) {
   if (msg.type === 'text') input.text = msg.text.body;
   else if (msg.type === 'interactive') {
     const i = msg.interactive;
-    input.replyId = (i.button_reply && i.button_reply.id) || (i.list_reply && i.list_reply.id);
-  } else if (msg.type === 'button') input.text = msg.button.text;
+    const r = i.button_reply || i.list_reply || i.quick_reply || i[i.type] || {};
+    input.replyId = r.id || r.payload;
+  } else if (msg.type === 'button') {
+    if (msg.button.payload && /^(start|retail|agent|corporate|cat:|prod:|var:|col:)/.test(msg.button.payload)) input.replyId = msg.button.payload;
+    else input.text = msg.button.text;
+  }
   // images, voice notes etc. just get the welcome menu
 
   const label = input.replyId || input.text || '[' + msg.type + ']';
