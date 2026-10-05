@@ -9,7 +9,10 @@
 // Carousels: one message, 2–10 swipeable cards. If WhatsApp ever rejects a carousel,
 // the same items are sent as a single list instead (see _fallbacks / whatsapp.js).
 
-const { MENU, CORPORATE_EMAIL, BRAND, TAGLINE, DELIVERY_NOTE, WELCOME_IMAGE, STORE_URL, CATALOG_ID, CATALOG_ITEM_ID, CALL_NUMBER } = require('./config');
+const config = require('./config');
+const liveMenu = require('./menu');
+let MENU = config.MENU; // replaced by the live website menu on every message (see respond)
+const { CORPORATE_EMAIL, BRAND, TAGLINE, DELIVERY_NOTE, WELCOME_IMAGE, STORE_URL, CATALOG_ID, CATALOG_ITEM_ID, CALL_NUMBER } = require('./config');
 const hours = require('./hours');
 const admin = require('./shopify-admin');
 const shop = require('./shopify');
@@ -206,6 +209,19 @@ function agentChoice(name) {
     },
   };
   return [card, buttons('Anything else?', [SHOP, MAIN])];
+}
+
+// Chat with the team (used when no CALL_NUMBER is set)
+function agent(name) {
+  const thanks = firstName(name) ? `Thank you, ${firstName(name)}.` : 'Thank you.';
+  const when = hours.isOpen()
+    ? 'An executive will reply to you in this chat shortly.'
+    : `Our team is available ${hours.describe()} (IST). An executive will reply to you in this chat as soon as we are back.`;
+  return [
+    text(
+      `🔔 *Executive requested*\n\n${thanks} Your request has been passed to our team. ${when}\n\nYou are welcome to share your question or order details here in the meantime. You can also write to us at ${CORPORATE_EMAIL}.\n\n_Send *hi* at any time to return to the main menu._`
+    ),
+  ];
 }
 
 function thanks() {
@@ -585,6 +601,7 @@ function catOfCollection(handle) {
 }
 
 async function respond(input) {
+  MENU = await liveMenu.get(); // follow the website's current menu
   const id = input.replyId;
   const t = (input.text || '').trim().toLowerCase();
 

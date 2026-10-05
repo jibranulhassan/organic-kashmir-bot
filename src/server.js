@@ -22,6 +22,7 @@ const server = http.createServer((req, res) => {
   if (req.method === 'GET' && url.pathname === '/refresh') {
     if (!process.env.ADMIN_KEY || url.searchParams.get('key') !== process.env.ADMIN_KEY) { res.writeHead(404); return res.end(); }
     require('./shopify').clearCache();
+    require('./menu').clearCache();
     feed.clearCache();
     console.log('🔄 Product data refreshed');
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });

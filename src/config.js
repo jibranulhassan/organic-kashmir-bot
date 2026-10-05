@@ -1,4 +1,5 @@
-// Menu structure — mirrors the navigation menu on organickashmir.com.
+// Settings. The category menu is read LIVE from the website's navigation (see menu.js);
+// the MENU list below is only a backup used if the website menu can't be read.
 // Each "collection" value is the Shopify collection handle (the part after /collections/ in the URL).
 // To add/rename a category, edit this list. Products and variants are read live from the website.
 // WhatsApp limits: titles max 24 characters, descriptions max 72, max 10 rows per list.
@@ -33,12 +34,6 @@ module.exports = {
   BUSINESS_DAYS: process.env.BUSINESS_DAYS || 'Mon-Sat',
 
   MENU: [
-    {
-      key: 'bandhan',
-      title: 'Bandhan Gift Hampers',
-      description: 'Festive gift sets & hampers',
-      collection: 'bandhan',
-    },
     {
       key: 'honey',
       title: 'Himalayan Honey',
