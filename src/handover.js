@@ -19,7 +19,7 @@ const PAUSE_MS = Number(process.env.HUMAN_PAUSE_HOURS || 12) * 3600e3;
 const QUIET_MS = 24 * 3600e3;
 
 const GREETING =
-  /^(hi+|hey+|hello+|helo|hlo|hii+|namaste|namaskar|salam|salaam|as+alam.*|asalam.*|good (morning|afternoon|evening)|menu|start|shop|shopping|order|catalog(ue)?|products?|retail|corporate)[\s!.,?🙏👋]*$/i;
+  /^(hi+|hey+|hello+|helo|hlo|hii+|namaste|namaskar|salam|salaam|as+alam.*|asalam.*|good (morning|afternoon|evening)|menu|start|shop|shopping|order|catalog(ue)?|products?|retail|corporate|orders?|my orders?|track( my)?( order| package)?)[\s!.,?🙏👋]*$/i;
 
 const staffReplied = new Map(); // customer -> time a team member last replied from the app
 const lastSeen = new Map(); // customer -> time the customer last messaged

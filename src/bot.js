@@ -11,6 +11,7 @@
 
 const { MENU, CORPORATE_EMAIL, BRAND, TAGLINE, DELIVERY_NOTE, WELCOME_IMAGE, STORE_URL, CATALOG_ID, CATALOG_ITEM_ID, CALL_NUMBER } = require('./config');
 const hours = require('./hours');
+const admin = require('./shopify-admin');
 const shop = require('./shopify');
 
 const cut = (s, n) => (s.length <= n ? s : s.slice(0, n - 1).trimEnd() + '…');
@@ -163,12 +164,13 @@ const firstName = (name) => (name || '').trim().split(/\s+/)[0] || '';
 const MAIN = { id: 'start', title: '🏠 Main Menu' };
 const AGENT = { id: 'agent', title: CALL_NUMBER ? '📞 Talk to Executive' : '💬 Talk to Executive' };
 const SHOP = { id: 'retail', title: '🛍️ Shop Products' };
+const ORDERS = { id: 'orders', title: '📦 My Orders' };
 
 function welcome(note, name) {
   const hello = firstName(name) ? `Hello ${firstName(name)},` : 'Hello,';
   const body = (note ? note + '\n\n' : '') + `${hello}\nWelcome to *${BRAND}*.\n\n${TAGLINE}\n\nHow may we assist you today?`;
   return [
-    buttons(body, [SHOP, AGENT], WELCOME_IMAGE ? { type: 'image', image: { link: WELCOME_IMAGE } } : null, DELIVERY_NOTE || null),
+    buttons(body, admin.enabled() ? [SHOP, ORDERS, AGENT] : [SHOP, AGENT], WELCOME_IMAGE ? { type: 'image', image: { link: WELCOME_IMAGE } } : null, DELIVERY_NOTE || null),
   ];
 }
 
@@ -193,21 +195,13 @@ function isAgentRequest(input) {
 const PUBLIC_URL = (process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || '').replace(/\/$/, '');
 function agentChoice(name) {
   if (!CALL_NUMBER || !PUBLIC_URL) return agent(name); // no number set -> chat with the team instead
-  const num = CALL_NUMBER.replace(/[^\d+]/g, '');
-  const pretty = num.startsWith('+') ? num : '+' + num;
-  const when = hours.describe()
-    ? hours.isOpen()
-      ? `\nOur team is available now (${hours.describe()} IST).`
-      : `\nOur team is available ${hours.describe()} (IST).`
-    : '';
-  const hi = firstName(name) ? `${firstName(name)}, w` : 'W';
+  const when = hours.describe() ? `Available ${hours.describe()} (IST).` : '';
   const card = {
     type: 'interactive',
     interactive: {
       type: 'cta_url',
       header: { type: 'text', text: 'Talk to an Executive' },
-      body: { text: `📞 ${hi}e'd be happy to help you personally.\n\nTap *Call Now* to speak with our team on *${pretty}*.${when}` },
-      footer: { text: 'Opens your phone dialer' },
+      body: { text: `Our customer care team will be glad to assist you personally.${when ? '\n' + when.trim() : ''}` },
       action: { name: 'cta_url', parameters: { display_text: 'Call Now', url: `${PUBLIC_URL}/call` } },
     },
   };
@@ -499,6 +493,74 @@ async function orderReply(order, name) {
   return [m, buttons('Need anything else?', [{ id: 'retail', title: '🛍️ Keep Shopping' }, AGENT])];
 }
 
+
+// ================= My Orders (Shopify customer data) =================
+// Looks up the customer by the WhatsApp number the message came from (verified by WhatsApp),
+// so nobody can see someone else's orders by typing their number.
+const STATUS = {
+  FULFILLED: 'Shipped', UNFULFILLED: 'Being prepared', PARTIALLY_FULFILLED: 'Partly shipped',
+  IN_PROGRESS: 'Being prepared', ON_HOLD: 'On hold', SCHEDULED: 'Scheduled', OPEN: 'Being prepared',
+  PENDING_FULFILLMENT: 'Being prepared', RESTOCKED: 'Returned',
+};
+const DELIVERY = {
+  DELIVERED: 'Delivered ✅', IN_TRANSIT: 'In transit 🚚', OUT_FOR_DELIVERY: 'Out for delivery 🚚', ATTEMPTED_DELIVERY: 'Delivery attempted',
+  READY_FOR_PICKUP: 'Ready for pickup', CONFIRMED: 'Shipped 📦', LABEL_PRINTED: 'Packed 📦', LABEL_PURCHASED: 'Packed 📦', FAILURE: 'Delivery issue',
+};
+const fmtDate = (iso) => new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' });
+
+function orderCard(o) {
+  const f = (o.fulfillments || []).find((x) => x.trackingInfo && x.trackingInfo.length) || (o.fulfillments || [])[0];
+  const t = f && f.trackingInfo && f.trackingInfo[0];
+  let status = o.cancelledAt ? 'Cancelled' : (f && DELIVERY[f.displayStatus]) || STATUS[o.displayFulfillmentStatus] || 'Order received';
+  const items = o.lineItems.nodes.map((l) => `${l.quantity} × ${l.title}`);
+  const money = o.totalPriceSet.shopMoney;
+  const lines = [
+    `*Order ${o.name}*  ·  ${fmtDate(o.createdAt)}`,
+    '',
+    ...items.slice(0, 4).map((i) => `• ${i}`),
+    ...(items.length > 4 ? [`• +${items.length - 4} more`] : []),
+    '',
+    `Total: *${rs(Number(money.amount))}*`,
+    `Status: *${status}*`,
+  ];
+  if (t && (t.company || t.number)) lines.push(`Courier: ${[t.company, t.number].filter(Boolean).join(' · ')}`);
+  const url = (t && t.url) || o.statusPageUrl;
+  const m = {
+    type: 'interactive',
+    interactive: {
+      type: 'cta_url',
+      body: { text: cut(lines.join('\n'), 1024) },
+      action: { name: 'cta_url', parameters: { display_text: t && t.url ? 'Track Package' : 'View Order', url } },
+    },
+  };
+  return url ? m : text(lines.join('\n'));
+}
+
+async function myOrders(from, name) {
+  if (!admin.enabled()) return welcome(null, name);
+  let c = null;
+  try {
+    c = await admin.customerByWhatsApp(from);
+  } catch (e) {
+    console.error('Shopify lookup failed:', e.message);
+    return [buttons(`We're sorry — we couldn't fetch your orders just now. Please try again in a few minutes.`, [ORDERS, AGENT, MAIN])];
+  }
+  const pretty = '+' + String(from).replace(/\D/g, '');
+  if (!c || !c.orders.nodes.length) {
+    return [
+      buttons(
+        `We couldn't find any orders linked to *${pretty}*.\n\nIf you placed your order with a different phone number, please message us from that WhatsApp number, or speak with our team and we'll help you right away.`,
+        [SHOP, AGENT, MAIN]
+      ),
+    ];
+  }
+  const hello = c.firstName || firstName(name);
+  const out = [text(`${hello ? `Hello ${hello}, h` : 'H'}ere ${c.orders.nodes.length > 1 ? `are your ${c.orders.nodes.length} most recent orders` : 'is your most recent order'} 📦`)];
+  for (const o of c.orders.nodes) out.push(orderCard(o));
+  out.push(buttons('Anything else?', [SHOP, AGENT, MAIN]));
+  return out;
+}
+
 // A specific size (used by the list fallback and older buttons)
 async function variant(catKey, handle, variantId) {
   const p = await findProduct(catKey, handle);
@@ -531,6 +593,7 @@ async function respond(input) {
     if (!id) {
       if (/^(retail|shop|1)$/.test(t)) return await categories();
       if (/^(corporate|bulk)$/.test(t)) return corporate();
+      if (/^(my )?(orders?|track( my)?( order| package)?|order status)$/.test(t)) return await myOrders(input.from, input.name);
       if (AGENT_TEXT.test(t)) return agentChoice(input.name);
       if (THANKS.test(t)) return thanks();
       return welcome(input.note, input.name);
@@ -538,6 +601,7 @@ async function respond(input) {
     if (id === 'start') return welcome(null, input.name);
     if (id === 'retail') return await categories();
     if (id === 'corporate') return corporate();
+    if (id === 'orders') return await myOrders(input.from, input.name);
     if (id === 'agent') return agentChoice(input.name);
     if (id === 'agent_chat') return agent(input.name);
     if (id === 'agent_call') return agentChoice(input.name);

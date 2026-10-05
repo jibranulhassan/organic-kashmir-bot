@@ -138,7 +138,7 @@ async function handle(msg) {
   console.log(`← ${from}: ${label}`);
   // On a shared number, don't mark as read — so your team still sees it as unread in the app
   if (!handover.SHARED) wa.markRead(msg.id);
-  const replies = await respond({ ...input, note: decision.note, name: msg._name });
+  const replies = await respond({ ...input, note: decision.note, name: msg._name, from });
   for (const r of replies) await wa.send(from, r);
 
   // "Talk to Executive": alert the team and keep the bot out of this chat
