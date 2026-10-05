@@ -38,7 +38,7 @@ function decide(customer, input) {
   if (!SHARED) return { reply: true };
 
   const text = (input.text || '').trim();
-  if (input.replyId || input.agent) return { reply: true };
+  if (input.replyId || input.agent || input.order) return { reply: true };
   // "hi", "hello", "menu" etc. always restart the chat with the bot (even after the team replied)
   if (/^menu$/i.test(text) || GREETING.test(text)) {
     staffReplied.delete(customer);

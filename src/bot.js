@@ -9,7 +9,7 @@
 // Carousels: one message, 2–10 swipeable cards. If WhatsApp ever rejects a carousel,
 // the same items are sent as a single list instead (see _fallbacks / whatsapp.js).
 
-const { MENU, CORPORATE_EMAIL, BRAND, TAGLINE, DELIVERY_NOTE, WELCOME_IMAGE, STORE_URL } = require('./config');
+const { MENU, CORPORATE_EMAIL, BRAND, TAGLINE, DELIVERY_NOTE, WELCOME_IMAGE, STORE_URL, CATALOG_ID, CATALOG_ITEM_ID } = require('./config');
 const hours = require('./hours');
 const shop = require('./shopify');
 
@@ -203,7 +203,7 @@ function thanks() {
 }
 
 // Shop Products -> category carousel (photo of a product from each category)
-async function categories() {
+async function categoriesCards() {
   const cards = [];
   for (const c of MENU) {
     let photo = null;
@@ -223,7 +223,7 @@ async function categories() {
 }
 
 // Category -> product carousel (all products, with photos and prices)
-async function category(key, pageNo = 0) {
+async function categoryCards(key, pageNo = 0) {
   const c = findCategory(key);
   if (!c) return categories();
   const products = await categoryProducts(c);
@@ -303,6 +303,140 @@ async function product(catKey, handle, known) {
   ];
 }
 
+
+// ================= WhatsApp Catalog (vertical list with photos + cart) =================
+const retailerId = (p, v) => CATALOG_ITEM_ID.replace('{product_id}', p.id).replace('{variant_id}', v.id);
+
+// Native WhatsApp product list. sections: [{ title, items: [retailerId] }] (max 10 sections, 30 items)
+function productList(header, body, sections, fallbackMsgs) {
+  const m = {
+    type: 'interactive',
+    interactive: {
+      type: 'product_list',
+      header: { type: 'text', text: cut(header, 60) },
+      body: { text: cut(body, 1024) },
+      footer: { text: 'Tap an item to see details · add to cart' },
+      action: {
+        catalog_id: CATALOG_ID,
+        sections: sections.map((sec) => ({
+          title: cut(sec.title, 24),
+          product_items: sec.items.map((id) => ({ product_retailer_id: id })),
+        })),
+      },
+    },
+  };
+  // If WhatsApp rejects the catalog list, fall back to photo cards (and then to a plain list)
+  if (fallbackMsgs && fallbackMsgs[0]) {
+    const { _fallbacks = [], ...first } = fallbackMsgs[0];
+    m._fallbacks = [first, ..._fallbacks];
+  }
+  return m;
+}
+
+const HOW_TO_BUY =
+  'Tap *View items* to browse. Open any product for photos and details, add what you like to your cart, then tap *Send* — we\'ll reply with your secure checkout link.';
+
+// Shop Products -> catalog overview (all categories, a few products each) + list to open a full collection
+async function categories() {
+  if (!CATALOG_ID) return categoriesCards();
+  const perCat = Math.max(1, Math.floor(30 / MENU.length));
+  const sections = [];
+  for (const c of MENU) {
+    const products = await categoryProducts(c);
+    const items = products.slice(0, perCat).map((p) => retailerId(p, p.variants.reduce((a, b) => (b.price < a.price ? b : a))));
+    if (items.length) sections.push({ title: c.title, items });
+  }
+  const browse = list(
+    'Full collections',
+    'Or open a complete collection with every size:',
+    'View collections',
+    MENU.map((c) => ({ id: `cat:${c.key}:0`, title: c.title, desc: c.description }))
+  );
+  if (!sections.length) return categoriesCards();
+  return [
+    productList(`${BRAND} — Shop`, `*Our bestsellers by category* 🛍️\n\n${HOW_TO_BUY}`, sections.slice(0, 10), await categoriesCards()),
+    browse,
+  ];
+}
+
+// Category -> catalog list: one section per product, every size listed (with photos & prices)
+async function category(key, pageNo = 0) {
+  if (!CATALOG_ID) return categoryCards(key, pageNo);
+  const c = findCategory(key);
+  if (!c) return categories();
+  const products = await categoryProducts(c);
+  if (!products.length) return categoryCards(key, pageNo);
+
+  // Build pages that respect WhatsApp's limits (10 sections / 30 items per message)
+  const pages = [[]];
+  let count = 0;
+  for (const p of products) {
+    const ids = p.variants.slice(0, 30).map((v) => retailerId(p, v));
+    const cur = pages[pages.length - 1];
+    if (cur.length && (cur.length >= 10 || count + ids.length > 30)) {
+      pages.push([]);
+      count = 0;
+    }
+    pages[pages.length - 1].push({ title: p.title, items: ids });
+    count += ids.length;
+  }
+  const page = pages[Math.min(pageNo, pages.length - 1)];
+  const out = [
+    productList(
+      c.title,
+      `*${c.title}*${pages.length > 1 ? ` (${pageNo + 1}/${pages.length})` : ''}\nEvery size is listed under its product.\n\n${HOW_TO_BUY}`,
+      page,
+      await categoryCards(key, Math.min(pageNo, Math.ceil(products.length / PAGE) - 1))
+    ),
+  ];
+  const btns = [];
+  if (pageNo + 1 < pages.length) btns.push({ id: `cat:${key}:${pageNo + 1}`, title: 'More products ›' });
+  btns.push({ id: 'retail', title: '🛍️ All Collections' }, AGENT);
+  out.push(buttons('Looking for something else?', btns.slice(0, 3)));
+  return out;
+}
+
+// Find a Shopify variant (for order summaries)
+async function lookupVariant(variantId) {
+  for (const c of MENU) {
+    for (const p of await categoryProducts(c)) {
+      const v = p.variants.find((x) => x.id === String(variantId));
+      if (v) return { p, v };
+    }
+  }
+  return null;
+}
+
+// Customer sent their WhatsApp cart -> summary + secure checkout link on the website
+async function orderReply(order, name) {
+  const items = [];
+  for (const it of (order && order.product_items) || []) {
+    const m = String(it.product_retailer_id || '').match(/(\d+)\D*$/);
+    if (!m) continue;
+    const found = await lookupVariant(m[1]).catch(() => null);
+    items.push({
+      variantId: m[1],
+      quantity: Number(it.quantity) || 1,
+      price: Number(it.item_price) || (found ? found.v.price : 0),
+      label: found ? `${found.p.title}${isSized(found.v) ? ' — ' + found.v.title : ''}` : 'Item',
+      image: found ? found.v.image || found.p.image : null,
+    });
+  }
+  if (!items.length) {
+    return [buttons('Sorry, we could not read your cart. Please try again or speak with an executive.', [SHOP, AGENT])];
+  }
+  const total = items.reduce((s, i) => s + i.price * i.quantity, 0);
+  const lines = items.map((i) => `• ${i.quantity} × ${i.label} — ${rs(i.price * i.quantity)}`);
+  const hi = firstName(name) ? `Thank you, ${firstName(name)}! ` : 'Thank you! ';
+  const body = cut(
+    `${hi}Here is your order summary:\n\n${lines.join('\n')}\n\n*Total: ${rs(total)}*${DELIVERY_NOTE ? `\n✓ ${DELIVERY_NOTE}` : ''}\n\nTap *Checkout* to pay securely on our website — your items are already in the cart.`,
+    1024
+  );
+  const m = buyCard(body, shop.checkoutUrl(items), img(items[0].image));
+  m.interactive.action.parameters.display_text = 'Checkout';
+  return [m, buttons('Need anything else?', [{ id: 'retail', title: '🛍️ Keep Shopping' }, AGENT])];
+}
+
 // A specific size (used by the list fallback and older buttons)
 async function variant(catKey, handle, variantId) {
   const p = await findProduct(catKey, handle);
@@ -331,6 +465,7 @@ async function respond(input) {
   const t = (input.text || '').trim().toLowerCase();
 
   try {
+    if (input.order) return await orderReply(input.order, input.name);
     if (!id) {
       if (/^(retail|shop|1)$/.test(t)) return await categories();
       if (/^(corporate|bulk)$/.test(t)) return corporate();

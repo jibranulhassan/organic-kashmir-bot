@@ -39,11 +39,19 @@ function simplify(p) {
       image: v.featured_image && v.featured_image.src ? v.featured_image.src : null,
     }));
   return {
+    id: String(p.id),
     handle: p.handle,
     title: p.title,
     image: p.images && p.images[0] ? p.images[0].src : null,
     variants,
   };
+}
+
+// Shopify "cart permalink": opens checkout with these items already in the cart
+// items: [{ variantId, quantity }]
+function checkoutUrl(items) {
+  const path = items.map((i) => `${i.variantId}:${Math.max(1, Number(i.quantity) || 1)}`).join(',');
+  return `${STORE_URL}/cart/${path}?utm_source=whatsapp&utm_medium=bot`;
 }
 
 function productUrl(handle, variantId) {
@@ -52,4 +60,4 @@ function productUrl(handle, variantId) {
   return `${STORE_URL}/products/${handle}?${q.toString()}`;
 }
 
-module.exports = { getCollectionProducts, getProduct, productUrl, _cache: cache };
+module.exports = { getCollectionProducts, getProduct, productUrl, checkoutUrl, _cache: cache };

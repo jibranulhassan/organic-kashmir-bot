@@ -16,6 +16,13 @@ module.exports = {
       ? process.env.WELCOME_IMAGE
       : 'https://cdn.shopify.com/s/files/1/1338/5795/files/KASHMIR_SAFFRON_ORGANIC_KASHMIR.jpg?v=1750491019',
 
+  // WhatsApp Catalog (vertical product list with photos + cart). Leave CATALOG_ID empty to use photo cards instead.
+  CATALOG_ID: process.env.CATALOG_ID || '',
+  // How catalog items are named (the "Content ID" in Meta Commerce Manager).
+  // The bot's own feed (/catalog.csv) uses ok_{variant_id}. Only change this if you use a different feed,
+  // e.g. Shopify's Facebook channel: shopify_{product_id}_{variant_id} or shopify_IN_{product_id}_{variant_id}
+  CATALOG_ITEM_ID: process.env.CATALOG_ITEM_ID || 'ok_{variant_id}',
+
   // Team availability (India time). Example: BUSINESS_HOURS=10:00-19:00  BUSINESS_DAYS=Mon-Sat
   // If not set, the bot never mentions working hours.
   BUSINESS_HOURS: process.env.BUSINESS_HOURS || '',

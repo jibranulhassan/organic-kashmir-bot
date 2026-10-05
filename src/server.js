@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const { respond, isAgentRequest } = require('./bot');
 const team = require('./team');
 const connect = require('./connect');
+const feed = require('./feed');
 const wa = require('./whatsapp');
 const handover = require('./handover');
 
@@ -15,6 +16,9 @@ const server = http.createServer((req, res) => {
 
   // Private page for connecting your WhatsApp Business app number (Coexistence)
   if (connect.handle(req, res, url)) return;
+
+  // Product feed for the WhatsApp Catalog (Meta Commerce Manager)
+  if (feed.handle(req, res, url)) return;
 
   // Health check: open your server URL in a browser to confirm it's running
   if (req.method === 'GET' && url.pathname === '/') {
@@ -98,6 +102,7 @@ async function handle(msg) {
     if (msg.button.payload && /^(start|retail|agent|corporate|cat:|prod:|var:|col:)/.test(msg.button.payload)) input.replyId = msg.button.payload;
     else input.text = msg.button.text;
   }
+  else if (msg.type === 'order') input.order = msg.order; // customer sent their WhatsApp cart
   // images, voice notes etc. just get the welcome menu
 
   const label = input.replyId || input.text || '[' + msg.type + ']';
