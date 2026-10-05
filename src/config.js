@@ -24,7 +24,7 @@ module.exports = {
   CATALOG_ITEM_ID: process.env.CATALOG_ITEM_ID || 'ok_{variant_id}',
 
   // Phone number customers can call from "Talk to Executive" (with country code, e.g. +919876543210).
-  // Leave empty to skip the Chat/Call choice and go straight to chat.
+  // "Talk to Executive" then shows a Call Now button that opens the phone dialer. Leave empty to use chat instead.
   CALL_NUMBER: process.env.CALL_NUMBER || '',
 
   // Team availability (India time). Example: BUSINESS_HOURS=10:00-19:00  BUSINESS_DAYS=Mon-Sat

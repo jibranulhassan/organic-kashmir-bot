@@ -161,7 +161,7 @@ function priceLine(v) {
 // ---------- screens (each returns an array of messages) ----------
 const firstName = (name) => (name || '').trim().split(/\s+/)[0] || '';
 const MAIN = { id: 'start', title: '🏠 Main Menu' };
-const AGENT = { id: 'agent', title: '💬 Talk to Executive' };
+const AGENT = { id: 'agent', title: CALL_NUMBER ? '📞 Talk to Executive' : '💬 Talk to Executive' };
 const SHOP = { id: 'retail', title: '🛍️ Shop Products' };
 
 function welcome(note, name) {
@@ -189,51 +189,29 @@ function isAgentRequest(input) {
   return input.replyId === 'agent' || (!input.replyId && AGENT_TEXT.test((input.text || '').trim()));
 }
 
-// Talk to Executive -> Chat or Call
+// Talk to Executive -> "Call Now" button that opens the phone's dialer (via the bot's /call page)
+const PUBLIC_URL = (process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || '').replace(/\/$/, '');
 function agentChoice(name) {
-  if (!CALL_NUMBER) return agent(name);
-  const when = hours.describe() ? `\n\nOur team is available ${hours.describe()} (IST).` : '';
-  return [
-    buttons(`*Talk to an Executive* 👋\n\nHow would you like to reach us?${when}`, [
-      { id: 'agent_chat', title: '💬 Chat with us' },
-      { id: 'agent_call', title: '📞 Call us' },
-      MAIN,
-    ]),
-  ];
-}
-
-function callUs() {
+  if (!CALL_NUMBER || !PUBLIC_URL) return agent(name); // no number set -> chat with the team instead
   const num = CALL_NUMBER.replace(/[^\d+]/g, '');
   const pretty = num.startsWith('+') ? num : '+' + num;
-  const when = hours.describe() ? `\nAvailable ${hours.describe()} (IST).` : '';
-  return [
-    text(`📞 *Call us*\n\nTap the number to call our team:\n*${pretty}*${when}\n\nYou can also save our contact card below.`),
-    {
-      type: 'contacts',
-      contacts: [
-        {
-          name: { formatted_name: BRAND, first_name: BRAND },
-          org: { company: BRAND },
-          phones: [{ phone: pretty, type: 'WORK' }],
-          emails: [{ email: CORPORATE_EMAIL, type: 'WORK' }],
-          urls: [{ url: STORE_URL, type: 'WORK' }],
-        },
-      ],
+  const when = hours.describe()
+    ? hours.isOpen()
+      ? `\nOur team is available now (${hours.describe()} IST).`
+      : `\nOur team is available ${hours.describe()} (IST).`
+    : '';
+  const hi = firstName(name) ? `${firstName(name)}, w` : 'W';
+  const card = {
+    type: 'interactive',
+    interactive: {
+      type: 'cta_url',
+      header: { type: 'text', text: 'Talk to an Executive' },
+      body: { text: `📞 ${hi}e'd be happy to help you personally.\n\nTap *Call Now* to speak with our team on *${pretty}*.${when}` },
+      footer: { text: 'Opens your phone dialer' },
+      action: { name: 'cta_url', parameters: { display_text: 'Call Now', url: `${PUBLIC_URL}/call` } },
     },
-    buttons('Anything else?', [{ id: 'agent_chat', title: '💬 Chat with us' }, SHOP, MAIN]),
-  ];
-}
-
-function agent(name) {
-  const thanks = firstName(name) ? `Thank you, ${firstName(name)}.` : 'Thank you.';
-  const when = hours.isOpen()
-    ? 'An executive will reply to you in this chat shortly.'
-    : `Our team is available ${hours.describe()} (IST). An executive will reply to you in this chat as soon as we are back.`;
-  return [
-    text(
-      `🔔 *Executive requested*\n\n${thanks} Your request has been passed to our team. ${when}\n\nYou are welcome to share your question or order details here in the meantime. You can also write to us at ${CORPORATE_EMAIL}.\n\n_Send *hi* at any time to return to the main menu._`
-    ),
-  ];
+  };
+  return [card, buttons('Anything else?', [SHOP, MAIN])];
 }
 
 function thanks() {
@@ -562,7 +540,7 @@ async function respond(input) {
     if (id === 'corporate') return corporate();
     if (id === 'agent') return agentChoice(input.name);
     if (id === 'agent_chat') return agent(input.name);
-    if (id === 'agent_call') return callUs();
+    if (id === 'agent_call') return agentChoice(input.name);
 
     const [kind, a, b, c] = id.split(':');
     if (kind === 'cat') return await category(a, Number(b) || 0);

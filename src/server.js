@@ -17,6 +17,20 @@ const server = http.createServer((req, res) => {
   // Private page for connecting your WhatsApp Business app number (Coexistence)
   if (connect.handle(req, res, url)) return;
 
+  // "Call Now" page: hands the number to the phone's dialer
+  if (req.method === 'GET' && url.pathname === '/call') {
+    const raw = (process.env.CALL_NUMBER || '').replace(/[^\d+]/g, '');
+    if (!raw) { res.writeHead(404); return res.end(); }
+    const num = raw.startsWith('+') ? raw : '+' + raw;
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+    return res.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Call Organic Kashmir</title><meta http-equiv="refresh" content="0;url=tel:${num}">
+<style>body{font-family:system-ui,sans-serif;background:#f6f4ef;margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center;text-align:center;color:#1d2a24}
+a{display:inline-block;background:#1f7a4d;color:#fff;text-decoration:none;font-size:20px;padding:16px 28px;border-radius:12px;margin-top:16px}</style></head>
+<body><div><h2>Organic Kashmir</h2><p>Opening your phone dialer…</p><a href="tel:${num}">📞 Call ${num}</a></div>
+<script>location.href='tel:${num}';</script></body></html>`);
+  }
+
   // Product feed for the WhatsApp Catalog (Meta Commerce Manager)
   if (feed.handle(req, res, url)) return;
 
