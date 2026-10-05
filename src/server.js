@@ -49,6 +49,7 @@ const server = http.createServer((req, res) => {
         const expected = 'sha256=' + crypto.createHmac('sha256', process.env.APP_SECRET).update(raw).digest('hex');
         const got = req.headers['x-hub-signature-256'] || '';
         if (got.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(got), Buffer.from(expected))) {
+          console.log('⚠️ Webhook rejected: signature does not match APP_SECRET (remove APP_SECRET in Render if you use Dualhook)');
           res.writeHead(401);
           return res.end();
         }
@@ -62,6 +63,14 @@ const server = http.createServer((req, res) => {
       } catch (_) {
         return;
       }
+      // Log every delivery so we can see what Meta/Dualhook sends
+      const kinds = [];
+      for (const e of body.entry || []) for (const ch of e.changes || []) {
+        const v = ch.value || {};
+        kinds.push(`${ch.field || '?'}${v.messages ? ':' + v.messages.length + ' msg' : ''}${v.statuses ? ':status' : ''}${v.message_echoes ? ':echo' : ''}`);
+      }
+      console.log(`📩 Webhook received: ${kinds.join(', ') || (body.event || body.object || 'unknown')}`);
+
       for (const entry of body.entry || []) {
         for (const change of entry.changes || []) {
           const contacts = (change.value && change.value.contacts) || [];
