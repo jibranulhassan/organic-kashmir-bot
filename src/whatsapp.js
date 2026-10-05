@@ -1,10 +1,18 @@
 // Sends messages through the WhatsApp Cloud API.
-// Two ways to connect, chosen by your settings:
-//   • Meta directly:  WHATSAPP_TOKEN + PHONE_NUMBER_ID  (test number / dedicated number)
-//   • 360dialog:      D360_API_KEY                      (needed for Coexistence on your existing number)
+// Ways to connect, chosen by your settings:
+//   • Dualhook:       DUALHOOK_API_KEY + PHONE_NUMBER_ID  (Coexistence on your existing number)
+//   • Meta directly:  WHATSAPP_TOKEN + PHONE_NUMBER_ID    (test number / dedicated number)
+//   • 360dialog:      D360_API_KEY
 // The message format is identical; only the address and the key differ.
 
 function endpoint() {
+  // Dualhook (Coexistence): same request format as Meta, sent via Dualhook with a dh_live_ key
+  if (process.env.DUALHOOK_API_KEY) {
+    return {
+      url: `${process.env.DUALHOOK_BASE_URL || 'https://api.dualhook.com/v25.0'}/${process.env.PHONE_NUMBER_ID}/messages`,
+      headers: { Authorization: `Bearer ${process.env.DUALHOOK_API_KEY}`, 'Content-Type': 'application/json' },
+    };
+  }
   if (process.env.D360_API_KEY) {
     return {
       url: (process.env.D360_BASE_URL || 'https://waba-v2.360dialog.io') + '/messages',
