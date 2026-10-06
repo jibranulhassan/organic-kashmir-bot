@@ -125,7 +125,17 @@ function cardText(s) {
 }
 
 // ---------- catalog helpers ----------
-const findCategory = (key) => MENU.find((c) => c.key === key);
+// "oils-rose-water" -> the category; "oils-rose-water~1" -> its 2nd sub-collection (e.g. Rose Water)
+function findCategory(key) {
+  const [base, sub] = String(key || '').split('~');
+  const c = MENU.find((m) => m.key === base);
+  if (!c || sub === undefined) return c;
+  const s = (c.children || [])[Number(sub)];
+  return s ? { key: `${base}~${sub}`, title: s.title, collection: s.collection, product: s.product, parent: c } : c;
+}
+
+// Does this category open onto sub-collections first (e.g. Essential Oils / Rose Water)?
+const hasSubCollections = (c) => !c.parent && (c.children || []).some((s) => s.collection);
 const collectionsOf = (c) => (c.collection ? [c.collection] : (c.children || []).map((s) => s.collection)).filter(Boolean);
 
 // The links that make up a category, in website-menu order: collections and/or single products
@@ -348,10 +358,38 @@ async function categoriesStack() {
 
 const STACK = 8; // product cards per page
 
+// One product as a photo card: single size -> Buy Now; several sizes -> Choose Size
+function productCard(key, p) {
+  if (p.variants.length === 1) {
+    const v = p.variants[0];
+    const m = buyCard(`*${p.title}*${isSized(v) ? `\nSize: ${v.title}` : ''}\n${priceLine(v)}`, shop.productUrl(p.handle, v.id), img(v.image || p.image));
+    delete m.interactive.footer;
+    return m;
+  }
+  const sale = p.variants.some((v) => v.compareAt > v.price) ? '  🏷️ On sale' : '';
+  return buttons(`*${p.title}*\nFrom ${rs(minPrice(p))} · ${p.variants.length} sizes${sale}`, [{ id: `prod:${key}:${p.handle}`, title: 'Choose Size' }], photoHeader(p.image));
+}
+
+// Category with sub-collections -> one card per sub-collection (and per single product), to choose from
+async function subCategoryStack(c) {
+  const lists = await Promise.all(c.children.map(linkProducts));
+  const out = [text(`*${c.title}*\nPlease choose 👇`)];
+  c.children.forEach((s, i) => {
+    const items = lists[i];
+    if (!items.length) return; // nothing in stock here right now
+    if (s.product) return out.push(productCard(c.key, items[0]));
+    out.push(buttons(`*${s.title}*\n${items.length} product${items.length > 1 ? 's' : ''}`, [{ id: `cat:${c.key}~${i}:0`, title: 'Explore' }], photoHeader(items[0].image)));
+  });
+  if (out.length === 1) return [buttons(`Our *${c.title}* range is currently out of stock. Please explore our other collections or speak with an executive.`, [SHOP, AGENT])];
+  out.push(buttons('Looking for something else?', [{ id: 'retail', title: '🛍️ All Collections' }, AGENT]));
+  return out;
+}
+
 // Category -> one photo card per product, stacked vertically
 async function categoryStack(key, pageNo = 0) {
   const c = findCategory(key);
   if (!c) return categoriesStack();
+  if (hasSubCollections(c)) return subCategoryStack(c);
   const products = await categoryProducts(c);
   if (!products.length) {
     return [buttons(`Our *${c.title}* range is currently out of stock. Please explore our other collections or speak with an executive.`, [SHOP, AGENT])];
@@ -361,21 +399,10 @@ async function categoryStack(key, pageNo = 0) {
   const start = pageNo * STACK;
   const pageItems = products.slice(start, start + STACK);
   const out = [text(`*${c.title}*\n${products.length} product${products.length > 1 ? 's' : ''}${pageNo ? ` · page ${pageNo + 1}` : ''} 👇`)];
-  for (const p of pageItems) {
-    if (p.variants.length === 1) {
-      const v = p.variants[0];
-      const m = buyCard(`*${p.title}*${isSized(v) ? `\nSize: ${v.title}` : ''}\n${priceLine(v)}`, shop.productUrl(p.handle, v.id), img(v.image || p.image));
-      delete m.interactive.footer;
-      out.push(m);
-    } else {
-      const sale = p.variants.some((v) => v.compareAt > v.price) ? '  🏷️ On sale' : '';
-      out.push(
-        buttons(`*${p.title}*\nFrom ${rs(minPrice(p))} · ${p.variants.length} sizes${sale}`, [{ id: `prod:${key}:${p.handle}`, title: 'Choose Size' }], photoHeader(p.image))
-      );
-    }
-  }
+  for (const p of pageItems) out.push(productCard(key, p));
   const nav = [];
   if (products.length > start + STACK) nav.push({ id: `cat:${key}:${pageNo + 1}`, title: 'More products ›' });
+  if (c.parent) nav.push({ id: `cat:${c.parent.key}:0`, title: cut(`‹ ${c.parent.title}`, 20) });
   nav.push({ id: 'retail', title: '🛍️ All Collections' }, AGENT);
   out.push(buttons('Looking for something else?', nav.slice(0, 3)));
   return out;
@@ -441,6 +468,7 @@ async function category(key, pageNo = 0) {
   if (!CATALOG_ID) return categoryStack(key, pageNo);
   const c = findCategory(key);
   if (!c) return categories();
+  if (hasSubCollections(c)) return categoryStack(key, pageNo);
   const products = await categoryProducts(c);
   if (!products.length) return categoryCards(key, pageNo);
 
