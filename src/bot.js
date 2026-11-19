@@ -429,13 +429,10 @@ function productList(header, body, sections, fallbackMsgs) {
       },
     },
   };
-  // If WhatsApp rejects the catalog list, fall back to a plain vertical list
-  // (skipping the sideways photo cards), and only use the cards if there is no list.
+  // If WhatsApp rejects the catalog list, fall back to photo cards (and then to a plain list)
   if (fallbackMsgs && fallbackMsgs[0]) {
     const { _fallbacks = [], ...first } = fallbackMsgs[0];
-    const chain = [first, ..._fallbacks];
-    const plain = chain.filter((x) => !(x.interactive && x.interactive.type === 'carousel'));
-    m._fallbacks = plain.length ? plain : chain;
+    m._fallbacks = [first, ..._fallbacks];
   }
   return m;
 }
