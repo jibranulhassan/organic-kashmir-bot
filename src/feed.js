@@ -57,7 +57,7 @@ async function menuProducts() {
 
 async function buildCsv() {
   if (Date.now() - cache.at < 30 * 60 * 1000 && cache.csv) return cache.csv;
-  const cols = ['id', 'title', 'description', 'availability', 'condition', 'price', 'sale_price', 'link', 'image_link', 'brand', 'item_group_id', 'size', 'custom_label_0'];
+  const cols = ['id', 'title', 'description', 'availability', 'condition', 'price', 'sale_price', 'link', 'image_link', 'brand', 'item_group_id', 'size', 'custom_label_0', 'origin_country'];
   const inMenu = await menuProducts();
   const rows = [cols.join(',')];
   for (const p of await allProducts()) {
@@ -87,6 +87,8 @@ async function buildCsv() {
           p.id,
           sized ? v.title : '',
           inMenu.get(p.handle) || '',
+          // India: WhatsApp only sends catalogue products that state their country of origin
+          process.env.ORIGIN_COUNTRY || 'IN',
         ]
           .map(csvCell)
           .join(',')

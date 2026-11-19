@@ -29,6 +29,31 @@ const server = http.createServer((req, res) => {
     return res.end('<meta name="viewport" content="width=device-width,initial-scale=1"><body style="font-family:system-ui;padding:40px;text-align:center"><h2>✅ Products refreshed</h2><p>The WhatsApp bot will now show the latest products from ' + require('./config').STORE_URL.replace(/^https?:\/\/(www\.)?/, '') + '.</p></body>');
   }
 
+  // Read-only check of the number's WhatsApp settings (catalogue, India compliance info)
+  //   https://YOUR-BOT.onrender.com/check?key=ADMIN_KEY
+  if (req.method === 'GET' && url.pathname === '/check') {
+    if (!process.env.ADMIN_KEY || url.searchParams.get('key') !== process.env.ADMIN_KEY) { res.writeHead(404); return res.end(); }
+    const id = process.env.PHONE_NUMBER_ID;
+    const base = process.env.DUALHOOK_API_KEY
+      ? process.env.DUALHOOK_BASE_URL || 'https://api.dualhook.com/v25.0'
+      : `https://graph.facebook.com/${process.env.GRAPH_VERSION || 'v24.0'}`;
+    const auth = { Authorization: `Bearer ${process.env.DUALHOOK_API_KEY || process.env.WHATSAPP_TOKEN}` };
+    (async () => {
+      const out = {};
+      for (const p of ['whatsapp_commerce_settings', 'business_compliance_info']) {
+        try {
+          const r = await fetch(`${base}/${id}/${p}`, { headers: auth });
+          out[p] = { status: r.status, body: await r.text() };
+        } catch (e) {
+          out[p] = { error: e.message };
+        }
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(out, null, 2));
+    })();
+    return;
+  }
+
   // "Call Now" page: hands the number to the phone's dialer
   if (req.method === 'GET' && url.pathname === '/call') {
     const raw = (process.env.CALL_NUMBER || '').replace(/[^\d+]/g, '');
