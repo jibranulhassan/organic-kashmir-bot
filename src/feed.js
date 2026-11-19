@@ -1,9 +1,12 @@
-// Product feed for Meta Commerce Manager (WhatsApp Catalog), built live from organickashmir.com.
+// Product feed for Meta Commerce Manager (WhatsApp Catalog), built live from the website (STORE_URL).
+// Only products that appear in the website menu are included, each tagged with its menu category
+// (custom_label_0), so Commerce Manager sets can be made per category.
 //   https://YOUR-BOT.onrender.com/catalog.csv
 // In Commerce Manager: Catalog → Data sources → Data feed → Scheduled feed → paste this URL (daily).
 // One row per size (variant). Item IDs look like "ok_<variant id>", matching CATALOG_ITEM_ID.
 const { STORE_URL, BRAND, CATALOG_ITEM_ID } = require('./config');
 const shop = require('./shopify');
+const menu = require('./menu');
 
 let cache = { at: 0, csv: '' };
 
@@ -35,11 +38,30 @@ const csvCell = (v) => {
   return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 };
 
+// handle -> menu category title, for every product reachable from the website menu
+async function menuProducts() {
+  const out = new Map();
+  for (const c of await menu.get()) {
+    const links = (c.children && c.children.length ? c.children : [c]).filter((l) => l.collection || l.product);
+    for (const l of links) {
+      try {
+        if (l.product) out.has(l.product) || out.set(l.product, c.title);
+        else for (const p of await shop.getCollectionProducts(l.collection)) out.has(p.handle) || out.set(p.handle, c.title);
+      } catch (e) {
+        console.error(`Feed menu link ${l.product || l.collection}:`, e.message);
+      }
+    }
+  }
+  return out;
+}
+
 async function buildCsv() {
   if (Date.now() - cache.at < 30 * 60 * 1000 && cache.csv) return cache.csv;
-  const cols = ['id', 'title', 'description', 'availability', 'condition', 'price', 'sale_price', 'link', 'image_link', 'brand', 'item_group_id', 'size'];
+  const cols = ['id', 'title', 'description', 'availability', 'condition', 'price', 'sale_price', 'link', 'image_link', 'brand', 'item_group_id', 'size', 'custom_label_0'];
+  const inMenu = await menuProducts();
   const rows = [cols.join(',')];
   for (const p of await allProducts()) {
+    if (inMenu.size && !inMenu.has(p.handle)) continue; // only products shown in the website menu
     const images = p.images || [];
     const desc = plain(p.body_html).slice(0, 4900) || p.title;
     for (const v of p.variants || []) {
@@ -64,6 +86,7 @@ async function buildCsv() {
           BRAND,
           p.id,
           sized ? v.title : '',
+          inMenu.get(p.handle) || '',
         ]
           .map(csvCell)
           .join(',')

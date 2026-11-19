@@ -54,7 +54,7 @@ function buyCard(body, url, image) {
     interactive: {
       type: 'cta_url',
       body: { text: body },
-      footer: { text: 'Secure checkout on organickashmir.com' },
+      footer: { text: `Secure checkout on ${STORE_URL.replace(/^https?:\/\/(www\.)?/, '')}` },
       action: { name: 'cta_url', parameters: { display_text: 'Buy Now', url } },
     },
   };

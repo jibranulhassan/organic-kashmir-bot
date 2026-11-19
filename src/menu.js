@@ -1,4 +1,4 @@
-// Live category menu, read from the navigation menu on organickashmir.com.
+// Live category menu, read from the navigation menu on the website (STORE_URL, e.g. organickashmir.in).
 // Add, remove, rename or reorder items in Shopify's menu (Online Store → Navigation)
 // and the bot follows automatically. Menu items can link to collections or straight to products;
 // anything with nothing in stock is hidden.
@@ -40,8 +40,59 @@ function linkTarget(href) {
   return { collection: collection === 'all' ? null : collection, product };
 }
 
-// Parse the theme's mobile navigation: <ul class="mobile-nav"> ... <ul class="mobile-nav__sublist"> ...
+// Read the website menu. Works with both themes:
+//  • Be Yours / Dawn-style themes (organickashmir.in): <nav class="menu-drawer__navigation">
+//  • WeTheme themes (organickashmir.com):              <ul class="mobile-nav">
 function parseNav(html) {
+  return parseDrawerNav(html) || parseMobileNav(html);
+}
+
+// Be Yours menu drawer:
+//   <li><details><summary><span>Honey</span></summary> ... <div class="menu-drawer__topbar"> <a href="/collections/himalayan-honey">Honey</a> </div>
+//        <ul class="menu-drawer__menu"> <li><a href="/products/...">White Honey</a></li> ... </ul> ... </details></li>
+//   <li><a href="/products/shilajeet">Shilajit</a></li>          (a top-level link with no sub-menu)
+function parseDrawerNav(html) {
+  const start = html.search(/<nav[^>]*class="[^"]*\bmenu-drawer__navigation\b[^"]*"/);
+  if (start < 0) return null;
+  const end = html.indexOf('</nav>', start);
+  const nav = html.slice(start, end < 0 ? undefined : end);
+  const re =
+    /<summary[^>]*>[\s\S]*?<span[^>]*>([\s\S]*?)<\/span>|class="menu-drawer__topbar"[\s\S]*?<a[^>]*href="([^"]*)"|<\/details>|<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/g;
+  const items = [];
+  let parent = null; // the open drop-down (between <summary> and </details>)
+  let m;
+  while ((m = re.exec(nav))) {
+    if (m[1] !== undefined) {
+      // a drop-down heading: "Honey", "Kashmiri Teas", …
+      parent = { title: niceTitle(m[1]), collection: null, product: null, children: [] };
+      if (parent.title) items.push(parent);
+      continue;
+    }
+    if (m[2] !== undefined) {
+      // the drop-down's own link (shown at the top of the sub-menu)
+      if (parent) Object.assign(parent, linkTarget(m[2]));
+      continue;
+    }
+    if (m[0] === '</details>') {
+      parent = null;
+      continue;
+    }
+    const { collection, product } = linkTarget(m[3]);
+    const title = niceTitle(m[4]);
+    if (!title) continue;
+    if (parent) {
+      if (product) parent.children.push({ title, product });
+      else if (collection) parent.children.push({ title, collection });
+      // other links (pages such as "Find Your Saffron") are skipped
+    } else {
+      items.push({ title, collection, product, children: [] });
+    }
+  }
+  return items.length ? items : null;
+}
+
+// WeTheme mobile navigation: <ul class="mobile-nav"> ... <ul class="mobile-nav__sublist"> ...
+function parseMobileNav(html) {
   const start = html.search(/<ul[^>]*class="[^"]*\bmobile-nav\b(?!__)[^"]*"/);
   if (start < 0) return null;
   const re = /<ul[^>]*class="[^"]*mobile-nav__sublist[^"]*"[^>]*>|<\/ul>|<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/g;

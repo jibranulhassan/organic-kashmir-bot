@@ -5,7 +5,7 @@
 // WhatsApp limits: titles max 24 characters, descriptions max 72, max 10 rows per list.
 
 module.exports = {
-  STORE_URL: (process.env.STORE_URL || 'https://www.organickashmir.com').replace(/\/$/, ''),
+  STORE_URL: (process.env.STORE_URL || 'https://www.organickashmir.in').replace(/\/$/, ''),
   CORPORATE_EMAIL: process.env.CORPORATE_EMAIL || 'hello@organickashmir.com',
   BRAND: 'Organic Kashmir',
   TAGLINE: 'Pure, hand-picked produce from the valleys of Kashmir — saffron, Himalayan honey, forest herbs and more.',

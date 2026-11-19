@@ -26,7 +26,7 @@ const server = http.createServer((req, res) => {
     feed.clearCache();
     console.log('🔄 Product data refreshed');
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    return res.end('<meta name="viewport" content="width=device-width,initial-scale=1"><body style="font-family:system-ui;padding:40px;text-align:center"><h2>✅ Products refreshed</h2><p>The WhatsApp bot will now show the latest products from organickashmir.com.</p></body>');
+    return res.end('<meta name="viewport" content="width=device-width,initial-scale=1"><body style="font-family:system-ui;padding:40px;text-align:center"><h2>✅ Products refreshed</h2><p>The WhatsApp bot will now show the latest products from ' + require('./config').STORE_URL.replace(/^https?:\/\/(www\.)?/, '') + '.</p></body>');
   }
 
   // "Call Now" page: hands the number to the phone's dialer
